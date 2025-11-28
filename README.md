@@ -32,6 +32,19 @@ plugins {
         // E.g. if you have set default_mode to "locked", then
         // you can hide hints in the locked mode by setting this to true
         hide_in_base_mode false // default
+
+        // Custom colors (hex format: "#RRGGBB" or "RRGGBB")
+        // These override the default Zellij theme colors
+        // key_fg "#000000"   // Foreground color for keybinding badges
+        // key_bg "#00D9FF"   // Background color for keybinding badges
+        // label_fg "#E0E0FF" // Foreground color for hint labels
+        // label_bg "#0A0A0F" // Background color for hint labels
+
+        // Per-label color overrides (applies to specific hints)
+        // select_key_bg "#FF0000"  // Red background for "select" hint in all modes
+
+        // Mode-specific color overrides (applies only in specific modes)
+        // pane.new_key_bg "#00FF00"  // Green background for "new" hint only in pane mode
     }
 }
 
@@ -58,6 +71,8 @@ layout {
 
                 // Note: this is necessary or else zjstatus won't render the pipe:
                 pipe_zjstatus_hints_format "{output}"
+                // Use "raw" rendermode when using custom colors to preserve ANSI codes:
+                // pipe_zjstatus_hints_rendermode "raw"
             }
         }
     }
@@ -71,10 +86,36 @@ layout {
 - `pipe_name`: Name of the pipe for zjstatus integration (default: "zjstatus_hints")
 - `hide_in_base_mode`: Hide hints in base mode (a.k.a. default mode) (default: false)
 
+### Color Configuration
+
+Global color options (apply to all hints):
+- `key_fg`: Foreground color for keybinding badges (hex format, e.g. "#000000")
+- `key_bg`: Background color for keybinding badges (hex format, e.g. "#00D9FF")
+- `label_fg`: Foreground color for hint labels (hex format, e.g. "#E0E0FF")
+- `label_bg`: Background color for hint labels (hex format, e.g. "#0A0A0F")
+
+Per-label color overrides (apply to specific hints in all modes):
+- `{label}_key_fg`, `{label}_key_bg`, `{label}_label_fg`, `{label}_label_bg`
+- For labels with spaces, use underscores: `split_right_key_bg` for "split right"
+- Example: `select_key_bg "#FF0000"` applies to the "select" hint everywhere
+
+Mode-specific color overrides (apply only in specific modes):
+- `{mode}.{label}_key_fg`, `{mode}.{label}_key_bg`, etc.
+- Example: `pane.new_key_bg "#00FF00"` applies only to "new" in pane mode
+- Valid modes: `normal`, `pane`, `tab`, `resize`, `move`, `scroll`, `search`, `session`
+
+Color priority (highest to lowest):
+1. Mode-specific override (e.g., `pane.select_key_bg`)
+2. Per-label override (e.g., `select_key_bg`)
+3. Global color (e.g., `key_bg`)
+4. Zellij theme colors (`ribbon_unselected` for keys, `text_unselected` for labels)
+
+**Note:** When using custom colors, you should set `pipe_zjstatus_hints_rendermode "raw"` in your zjstatus configuration to ensure the ANSI color codes are rendered correctly.
+
 ## TODO
 
-- [ ] configurable colors/formatting
-- [ ] more advanced mode-specific configuration
+- [x] configurable colors/formatting
+- [x] more advanced mode-specific configuration
 - [ ] improved handling of long outputs
 - [ ] ability to enable/disable specific hints
 
