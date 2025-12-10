@@ -698,8 +698,10 @@ fn style_key_with_modifier(
             .fg(contrasting_fg)
             .on(saturated_bg)
             .bold()
-            .paint(format!(" {}", formatted_combo)),
+            .paint(format!(" {} ", formatted_combo)),
     );
+
+    styled_parts.push(Style::new().fg(contrasting_fg).on(saturated_bg).paint(" "));
 
     styled_parts
 }
@@ -723,7 +725,7 @@ fn style_description(
     vec![Style::new()
         .fg(contrasting_fg)
         .on(less_saturated_bg)
-        .paint(format!(" {}", description))]
+        .paint(format!(" {} ", description))]
 }
 
 fn plugin_key(
