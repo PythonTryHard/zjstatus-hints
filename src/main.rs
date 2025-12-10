@@ -538,6 +538,8 @@ fn truncate_ansi_string(text: &str, overflow_str: &str, max_len: usize) -> Strin
         }
     }
 
+    // Close any active ANSI styles before appending overflow marker
+    result.push_str("\x1b[0m");
     result.push_str(overflow_str);
     result
 }
