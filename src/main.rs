@@ -22,6 +22,8 @@ struct State {
     color_config: ColorConfig,
     // Custom label format configuration
     label_format_config: LabelFormatConfig,
+    // Custom label text overrides
+    label_text_overrides: HashMap<String, String>,
 }
 
 register_plugin!(State);
@@ -52,6 +54,42 @@ fn parse_hex_color(s: &str) -> Option<ansi_term::Colour> {
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some(RGB(r, g, b))
+}
+
+/// Parse per-label text overrides from configuration
+///
+/// Format: "label_text" for label text replacements
+/// Example: "pane_label_text" = "p" replaces "pane" with "p"
+///
+/// For labels with spaces, use underscores: "split_right_label_text"
+fn parse_label_text_overrides(config: &BTreeMap<String, String>) -> HashMap<String, String> {
+    let mut overrides = HashMap::new();
+    const LABEL_TEXT_SUFFIX: &str = "_label_text";
+
+    for (key, value) in config.iter() {
+        if key.ends_with(LABEL_TEXT_SUFFIX) {
+            let label_name = key.trim_end_matches(LABEL_TEXT_SUFFIX);
+            if label_name.is_empty() {
+                continue;
+            }
+
+            // Convert underscores to spaces for multi-word labels
+            let label_key = label_name.replace('_', " ");
+
+            if !label_key.trim().is_empty() && !value.trim().is_empty() {
+                overrides.insert(label_key, value.clone());
+            }
+        }
+    }
+    overrides
+}
+
+/// Get the display label text, with override support
+fn get_label_text(overrides: &HashMap<String, String>, label: &str) -> String {
+    overrides
+        .get(label)
+        .cloned()
+        .unwrap_or_else(|| label.to_string())
 }
 
 /// Parse per-label color overrides from configuration
@@ -352,6 +390,9 @@ impl ZellijPlugin for State {
             overrides: parse_label_format_overrides(&configuration),
         };
 
+        // Parse custom label text overrides
+        self.label_text_overrides = parse_label_text_overrides(&configuration);
+
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
@@ -377,7 +418,7 @@ impl ZellijPlugin for State {
         let mode_info = &self.mode_info;
         let output = if !(self.hide_in_base_mode && Some(mode_info.mode) == mode_info.base_mode) {
             let keymap = get_keymap_for_mode(mode_info);
-            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config);
+            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config, &self.label_text_overrides);
 
             let ansi_strings = ANSIStrings(&parts);
             let formatted = format!(" {}", ansi_strings);
@@ -705,12 +746,15 @@ fn add_hint(
     colors: &Styling,
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
+    label_text_overrides: &HashMap<String, String>,
     mode: Option<&str>,
 ) {
     if !keys.is_empty() {
+        // Apply label text override if available
+        let display_label = get_label_text(label_text_overrides, description);
         let styled_keys = style_key_with_modifier(keys, colors, color_config, label_format_config, mode, description);
         parts.extend(styled_keys);
-        let styled_desc = style_description(description, colors, color_config, mode, description);
+        let styled_desc = style_description(&display_label, colors, color_config, mode, description);
         parts.extend(styled_desc);
     }
 }
@@ -736,6 +780,7 @@ fn render_hints_for_mode(
     colors: &Styling,
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
+    label_text_overrides: &HashMap<String, String>,
 ) -> Vec<ANSIString<'static>> {
     let mut parts = vec![];
     let select_keys = get_select_key(keymap);
@@ -745,14 +790,14 @@ fn render_hints_for_mode(
         InputMode::Normal => {
             for (action, label) in NORMAL_MODE_ACTIONS {
                 let keys = find_keys_for_actions(keymap, &[action.clone()], true);
-                add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, mode_str);
+                add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, label_text_overrides, mode_str);
             }
         }
         InputMode::Pane => {
             for (actions, label) in PANE_MODE_ACTION_SEQUENCES {
                 let keys = find_keys_for_actions(keymap, actions, false);
                 if !keys.is_empty() {
-                    add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, mode_str);
+                    add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, label_text_overrides, mode_str);
                 }
             }
 
@@ -765,7 +810,7 @@ fn render_hints_for_mode(
                 false,
             );
             if !rename_keys.is_empty() {
-                add_hint(&mut parts, &rename_keys, "rename", colors, color_config, label_format_config, mode_str);
+                add_hint(&mut parts, &rename_keys, "rename", colors, color_config, label_format_config, label_text_overrides, mode_str);
             }
 
             let focus_keys = find_keys_for_action_groups(
@@ -777,14 +822,14 @@ fn render_hints_for_mode(
                     &[Action::MoveFocus(Direction::Right)],
                 ],
             );
-            add_hint(&mut parts, &focus_keys, "move", colors, color_config, label_format_config, mode_str);
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &focus_keys, "move", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
         }
         InputMode::Tab => {
             for (actions, label) in TAB_MODE_ACTION_SEQUENCES {
                 let keys = find_keys_for_actions(keymap, actions, false);
                 if !keys.is_empty() {
-                    add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, mode_str);
+                    add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, label_text_overrides, mode_str);
                 }
             }
 
@@ -797,7 +842,7 @@ fn render_hints_for_mode(
                 false,
             );
             if !rename_keys.is_empty() {
-                add_hint(&mut parts, &rename_keys, "rename", colors, color_config, label_format_config, mode_str);
+                add_hint(&mut parts, &rename_keys, "rename", colors, color_config, label_format_config, label_text_overrides, mode_str);
             }
 
             let focus_keys_full = find_keys_for_action_groups(
@@ -814,8 +859,8 @@ fn render_hints_for_mode(
             } else {
                 focus_keys_full
             };
-            add_hint(&mut parts, &focus_keys, "move", colors, color_config, label_format_config, mode_str);
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &focus_keys, "move", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
         }
         InputMode::Resize => {
             let resize_keys = find_keys_for_action_groups(
@@ -825,7 +870,7 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Decrease, None)],
                 ],
             );
-            add_hint(&mut parts, &resize_keys, "resize", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &resize_keys, "resize", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let increase_keys = find_keys_for_action_groups(
                 keymap,
@@ -836,7 +881,7 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Increase, Some(Direction::Right))],
                 ],
             );
-            add_hint(&mut parts, &increase_keys, "increase", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &increase_keys, "increase", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let decrease_keys = find_keys_for_action_groups(
                 keymap,
@@ -847,8 +892,8 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Decrease, Some(Direction::Right))],
                 ],
             );
-            add_hint(&mut parts, &decrease_keys, "decrease", colors, color_config, label_format_config, mode_str);
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &decrease_keys, "decrease", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
         }
         InputMode::Move => {
             let move_keys = find_keys_for_action_groups(
@@ -860,8 +905,8 @@ fn render_hints_for_mode(
                     &[Action::MovePane(Some(Direction::Right))],
                 ],
             );
-            add_hint(&mut parts, &move_keys, "move", colors, color_config, label_format_config, mode_str);
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &move_keys, "move", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
         }
         InputMode::Scroll => {
             let search_keys = find_keys_for_actions(
@@ -872,30 +917,30 @@ fn render_hints_for_mode(
                 ],
                 true,
             );
-            add_hint(&mut parts, &search_keys, "search", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &search_keys, "search", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let scroll_keys =
                 find_keys_for_action_groups(keymap, &[&[Action::ScrollDown], &[Action::ScrollUp]]);
-            add_hint(&mut parts, &scroll_keys, "scroll", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &scroll_keys, "scroll", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::PageScrollDown], &[Action::PageScrollUp]],
             );
-            add_hint(&mut parts, &page_scroll_keys, "page", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &page_scroll_keys, "page", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let half_page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::HalfPageScrollDown], &[Action::HalfPageScrollUp]],
             );
-            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let edit_keys =
                 find_keys_for_actions(keymap, &[Action::EditScrollback, TO_NORMAL], false);
             if !edit_keys.is_empty() {
-                add_hint(&mut parts, &edit_keys, "edit", colors, color_config, label_format_config, mode_str);
+                add_hint(&mut parts, &edit_keys, "edit", colors, color_config, label_format_config, label_text_overrides, mode_str);
             }
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
         }
         InputMode::Search => {
             let search_keys = find_keys_for_actions(
@@ -906,60 +951,60 @@ fn render_hints_for_mode(
                 ],
                 true,
             );
-            add_hint(&mut parts, &search_keys, "search", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &search_keys, "search", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let scroll_keys =
                 find_keys_for_action_groups(keymap, &[&[Action::ScrollDown], &[Action::ScrollUp]]);
-            add_hint(&mut parts, &scroll_keys, "scroll", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &scroll_keys, "scroll", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::PageScrollDown], &[Action::PageScrollUp]],
             );
-            add_hint(&mut parts, &page_scroll_keys, "page", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &page_scroll_keys, "page", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let half_page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::HalfPageScrollDown], &[Action::HalfPageScrollUp]],
             );
-            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let down_keys =
                 find_keys_for_actions(keymap, &[Action::Search(SearchDirection::Down)], true);
-            add_hint(&mut parts, &down_keys, "down", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &down_keys, "down", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             let up_keys =
                 find_keys_for_actions(keymap, &[Action::Search(SearchDirection::Up)], true);
-            add_hint(&mut parts, &up_keys, "up", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &up_keys, "up", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
         }
         InputMode::Session => {
             let detach_keys = find_keys_for_actions(keymap, &[Action::Detach], true);
-            add_hint(&mut parts, &detach_keys, "detach", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &detach_keys, "detach", colors, color_config, label_format_config, label_text_overrides, mode_str);
 
             if let Some(manager_key) = plugin_key(keymap, PLUGIN_SESSION_MANAGER) {
-                add_hint(&mut parts, &[manager_key], "manager", colors, color_config, label_format_config, mode_str);
+                add_hint(&mut parts, &[manager_key], "manager", colors, color_config, label_format_config, label_text_overrides, mode_str);
             }
 
             if let Some(config_key) = plugin_key(keymap, PLUGIN_CONFIGURATION) {
-                add_hint(&mut parts, &[config_key], "config", colors, color_config, label_format_config, mode_str);
+                add_hint(&mut parts, &[config_key], "config", colors, color_config, label_format_config, label_text_overrides, mode_str);
             }
 
             if let Some(plugin_key_val) = plugin_key(keymap, PLUGIN_MANAGER) {
-                add_hint(&mut parts, &[plugin_key_val], "plugins", colors, color_config, label_format_config, mode_str);
+                add_hint(&mut parts, &[plugin_key_val], "plugins", colors, color_config, label_format_config, label_text_overrides, mode_str);
             }
 
             if let Some(about_key) = plugin_key(keymap, PLUGIN_ABOUT) {
-                add_hint(&mut parts, &[about_key], "about", colors, color_config, label_format_config, mode_str);
+                add_hint(&mut parts, &[about_key], "about", colors, color_config, label_format_config, label_text_overrides, mode_str);
             }
 
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
         }
         _ => {
             let keys =
                 find_keys_for_actions(keymap, &[Action::SwitchToMode(InputMode::Normal)], true);
-            add_hint(&mut parts, &keys, "normal", colors, color_config, label_format_config, mode_str);
+            add_hint(&mut parts, &keys, "normal", colors, color_config, label_format_config, label_text_overrides, mode_str);
         }
     }
 
