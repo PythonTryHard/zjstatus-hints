@@ -112,6 +112,61 @@ Color priority (highest to lowest):
 
 **Note:** When using custom colors, you should set `pipe_zjstatus_hints_rendermode "raw"` in your zjstatus configuration to ensure the ANSI color codes are rendered correctly.
 
+### Label Text Configuration
+
+Customize the text displayed for hint labels (e.g., "pane" → "p" or use unicode glyphs).
+
+Global label text option (applies to all hints):
+- Default labels are used from Zellij's action names (e.g., "pane", "tab", "new", "split right")
+
+Per-label text overrides (apply to specific hints in all modes):
+- `{label}_label_text`
+- For labels with spaces, use underscores: `split_right_label_text` for "split right"
+- Example: `pane_label_text "ｐ"` replaces "pane" with "ｐ" (unicode fullwidth character)
+- Supports unicode glyphs: `new_label_text "✨"`, `close_label_text "✕"`, etc.
+
+Mode-specific label text overrides (apply only in specific modes):
+- `{mode}.{label}_label_text`
+- Example: `pane.new_label_text "ｎ"` applies only to "new" in pane mode
+- Valid modes: `normal`, `pane`, `tab`, `resize`, `move`, `scroll`, `search`, `session`
+
+Label text priority (highest to lowest):
+1. Mode-specific override (e.g., `pane.new_label_text`)
+2. Per-label override (e.g., `new_label_text`)
+3. Default label from Zellij (e.g., "new")
+
+#### Label Text Examples
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Shorthand ASCII labels
+        pane_label_text "p"
+        tab_label_text "t"
+        resize_label_text "r"
+        move_label_text "m"
+        scroll_label_text "sc"
+        search_label_text "sh"
+
+        // Unicode fullwidth characters
+        pane_label_text "ｐ"
+        tab_label_text "ｔ"
+        new_label_text "ｎ"
+
+        // Unicode symbols
+        split_right_label_text "→"
+        split_down_label_text "↓"
+        close_label_text "✕"
+        fullscreen_label_text "◻"
+
+        // Mode-specific overrides: different labels per mode
+        pane.move_label_text "↕"
+        pane.new_label_text "+"
+        tab.move_label_text "←→"
+    }
+}
+```
+
 ### Label Format Configuration
 
 Customize how keybind displays are formatted using template syntax.

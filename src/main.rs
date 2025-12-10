@@ -84,8 +84,18 @@ fn parse_label_text_overrides(config: &BTreeMap<String, String>) -> HashMap<Stri
     overrides
 }
 
-/// Get the display label text, with override support
-fn get_label_text(overrides: &HashMap<String, String>, label: &str) -> String {
+/// Get the display label text, with mode-specific and label-only override support
+/// Priority: mode-specific (e.g., "pane.new") > label-only (e.g., "new") > default
+fn get_label_text(overrides: &HashMap<String, String>, mode: Option<&str>, label: &str) -> String {
+    // Try mode-specific override first (e.g., "pane.new")
+    if let Some(m) = mode {
+        let mode_specific_key = format!("{}.{}", m, label);
+        if let Some(override_text) = overrides.get(&mode_specific_key) {
+            return override_text.clone();
+        }
+    }
+
+    // Fall back to label-only override (e.g., "new")
     overrides
         .get(label)
         .cloned()
@@ -763,8 +773,8 @@ fn add_hint(
     strip_modifier: Option<&[KeyModifier]>,
 ) {
     if !keys.is_empty() {
-        // Apply label text override if available
-        let display_label = get_label_text(label_text_overrides, description);
+        // Apply label text override if available (with mode-specific lookup)
+        let display_label = get_label_text(label_text_overrides, mode, description);
         let styled_keys = style_key_with_modifier(keys, colors, color_config, label_format_config, mode, description, strip_modifier);
         parts.extend(styled_keys);
         let styled_desc = style_description(&display_label, colors, color_config, mode, description);
