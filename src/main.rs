@@ -346,6 +346,24 @@ fn get_common_modifiers(mut key_bindings: Vec<&KeyWithModifier>) -> Vec<KeyModif
     common_modifiers.into_iter().collect()
 }
 
+/// Extract common modifiers shared across multiple key bindings from different hints
+fn extract_common_modifiers_from_keymap(
+    keymap: &[(KeyWithModifier, Vec<Action>)],
+) -> Vec<KeyModifier> {
+    if keymap.is_empty() {
+        return vec![];
+    }
+
+    let mut common = keymap[0].0.key_modifiers.clone();
+    for (key, _) in &keymap[1..] {
+        common = common
+            .intersection(&key.key_modifiers)
+            .cloned()
+            .collect();
+    }
+    common.into_iter().collect()
+}
+
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.initialized = false;
@@ -651,6 +669,7 @@ fn style_key_with_modifier(
     label_format_config: &LabelFormatConfig,
     mode: Option<&str>,
     label: &str,
+    strip_modifier: Option<&[KeyModifier]>,
 ) -> Vec<ANSIString<'static>> {
     if key_bindings.is_empty() {
         return vec![];
@@ -667,7 +686,19 @@ fn style_key_with_modifier(
     let mut styled_parts = vec![];
 
     let common_modifiers = get_common_modifiers(key_bindings.iter().collect());
-    let modifier_str = format_modifier_string(&common_modifiers);
+
+    // If strip_modifier is provided and it matches our common modifiers, don't show modifier
+    let display_modifiers = if let Some(strip) = strip_modifier {
+        if common_modifiers == strip {
+            vec![]
+        } else {
+            common_modifiers.clone()
+        }
+    } else {
+        common_modifiers.clone()
+    };
+
+    let modifier_str = format_modifier_string(&display_modifiers);
     let key_display = format_key_display(key_bindings, &common_modifiers);
     let key_separator = get_key_separator(&key_display);
 
@@ -748,11 +779,12 @@ fn add_hint(
     label_format_config: &LabelFormatConfig,
     label_text_overrides: &HashMap<String, String>,
     mode: Option<&str>,
+    strip_modifier: Option<&[KeyModifier]>,
 ) {
     if !keys.is_empty() {
         // Apply label text override if available
         let display_label = get_label_text(label_text_overrides, description);
-        let styled_keys = style_key_with_modifier(keys, colors, color_config, label_format_config, mode, description);
+        let styled_keys = style_key_with_modifier(keys, colors, color_config, label_format_config, mode, description, strip_modifier);
         parts.extend(styled_keys);
         let styled_desc = style_description(&display_label, colors, color_config, mode, description);
         parts.extend(styled_desc);
@@ -786,18 +818,30 @@ fn render_hints_for_mode(
     let select_keys = get_select_key(keymap);
     let mode_str = mode_to_str(mode);
 
+    // Extract common modifiers across all keybindings and render as a prefix badge
+    let common_modifiers = extract_common_modifiers_from_keymap(keymap);
+    if !common_modifiers.is_empty() {
+        let modifier_str = format_modifier_string(&common_modifiers);
+        let modifier_style = Style::new()
+            .fg(palette_match!(colors.ribbon_unselected.base))
+            .on(palette_match!(colors.ribbon_unselected.background))
+            .bold();
+        parts.push(Style::new().paint(" "));
+        parts.push(modifier_style.paint(format!(" {} ", modifier_str)));
+    }
+
     match mode {
         InputMode::Normal => {
             for (action, label) in NORMAL_MODE_ACTIONS {
                 let keys = find_keys_for_actions(keymap, &[action.clone()], true);
-                add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, label_text_overrides, mode_str);
+                add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
             }
         }
         InputMode::Pane => {
             for (actions, label) in PANE_MODE_ACTION_SEQUENCES {
                 let keys = find_keys_for_actions(keymap, actions, false);
                 if !keys.is_empty() {
-                    add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, label_text_overrides, mode_str);
+                    add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
                 }
             }
 
@@ -810,7 +854,7 @@ fn render_hints_for_mode(
                 false,
             );
             if !rename_keys.is_empty() {
-                add_hint(&mut parts, &rename_keys, "rename", colors, color_config, label_format_config, label_text_overrides, mode_str);
+                add_hint(&mut parts, &rename_keys, "rename", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
             }
 
             let focus_keys = find_keys_for_action_groups(
@@ -822,14 +866,14 @@ fn render_hints_for_mode(
                     &[Action::MoveFocus(Direction::Right)],
                 ],
             );
-            add_hint(&mut parts, &focus_keys, "move", colors, color_config, label_format_config, label_text_overrides, mode_str);
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &focus_keys, "move", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
         }
         InputMode::Tab => {
             for (actions, label) in TAB_MODE_ACTION_SEQUENCES {
                 let keys = find_keys_for_actions(keymap, actions, false);
                 if !keys.is_empty() {
-                    add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, label_text_overrides, mode_str);
+                    add_hint(&mut parts, &keys, label, colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
                 }
             }
 
@@ -842,7 +886,7 @@ fn render_hints_for_mode(
                 false,
             );
             if !rename_keys.is_empty() {
-                add_hint(&mut parts, &rename_keys, "rename", colors, color_config, label_format_config, label_text_overrides, mode_str);
+                add_hint(&mut parts, &rename_keys, "rename", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
             }
 
             let focus_keys_full = find_keys_for_action_groups(
@@ -859,8 +903,8 @@ fn render_hints_for_mode(
             } else {
                 focus_keys_full
             };
-            add_hint(&mut parts, &focus_keys, "move", colors, color_config, label_format_config, label_text_overrides, mode_str);
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &focus_keys, "move", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
         }
         InputMode::Resize => {
             let resize_keys = find_keys_for_action_groups(
@@ -870,7 +914,7 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Decrease, None)],
                 ],
             );
-            add_hint(&mut parts, &resize_keys, "resize", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &resize_keys, "resize", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let increase_keys = find_keys_for_action_groups(
                 keymap,
@@ -881,7 +925,7 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Increase, Some(Direction::Right))],
                 ],
             );
-            add_hint(&mut parts, &increase_keys, "increase", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &increase_keys, "increase", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let decrease_keys = find_keys_for_action_groups(
                 keymap,
@@ -892,8 +936,8 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Decrease, Some(Direction::Right))],
                 ],
             );
-            add_hint(&mut parts, &decrease_keys, "decrease", colors, color_config, label_format_config, label_text_overrides, mode_str);
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &decrease_keys, "decrease", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
         }
         InputMode::Move => {
             let move_keys = find_keys_for_action_groups(
@@ -905,8 +949,8 @@ fn render_hints_for_mode(
                     &[Action::MovePane(Some(Direction::Right))],
                 ],
             );
-            add_hint(&mut parts, &move_keys, "move", colors, color_config, label_format_config, label_text_overrides, mode_str);
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &move_keys, "move", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
         }
         InputMode::Scroll => {
             let search_keys = find_keys_for_actions(
@@ -917,30 +961,30 @@ fn render_hints_for_mode(
                 ],
                 true,
             );
-            add_hint(&mut parts, &search_keys, "search", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &search_keys, "search", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let scroll_keys =
                 find_keys_for_action_groups(keymap, &[&[Action::ScrollDown], &[Action::ScrollUp]]);
-            add_hint(&mut parts, &scroll_keys, "scroll", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &scroll_keys, "scroll", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::PageScrollDown], &[Action::PageScrollUp]],
             );
-            add_hint(&mut parts, &page_scroll_keys, "page", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &page_scroll_keys, "page", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let half_page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::HalfPageScrollDown], &[Action::HalfPageScrollUp]],
             );
-            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let edit_keys =
                 find_keys_for_actions(keymap, &[Action::EditScrollback, TO_NORMAL], false);
             if !edit_keys.is_empty() {
-                add_hint(&mut parts, &edit_keys, "edit", colors, color_config, label_format_config, label_text_overrides, mode_str);
+                add_hint(&mut parts, &edit_keys, "edit", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
             }
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
         }
         InputMode::Search => {
             let search_keys = find_keys_for_actions(
@@ -951,60 +995,60 @@ fn render_hints_for_mode(
                 ],
                 true,
             );
-            add_hint(&mut parts, &search_keys, "search", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &search_keys, "search", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let scroll_keys =
                 find_keys_for_action_groups(keymap, &[&[Action::ScrollDown], &[Action::ScrollUp]]);
-            add_hint(&mut parts, &scroll_keys, "scroll", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &scroll_keys, "scroll", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::PageScrollDown], &[Action::PageScrollUp]],
             );
-            add_hint(&mut parts, &page_scroll_keys, "page", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &page_scroll_keys, "page", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let half_page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::HalfPageScrollDown], &[Action::HalfPageScrollUp]],
             );
-            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let down_keys =
                 find_keys_for_actions(keymap, &[Action::Search(SearchDirection::Down)], true);
-            add_hint(&mut parts, &down_keys, "down", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &down_keys, "down", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             let up_keys =
                 find_keys_for_actions(keymap, &[Action::Search(SearchDirection::Up)], true);
-            add_hint(&mut parts, &up_keys, "up", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &up_keys, "up", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
         }
         InputMode::Session => {
             let detach_keys = find_keys_for_actions(keymap, &[Action::Detach], true);
-            add_hint(&mut parts, &detach_keys, "detach", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &detach_keys, "detach", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
 
             if let Some(manager_key) = plugin_key(keymap, PLUGIN_SESSION_MANAGER) {
-                add_hint(&mut parts, &[manager_key], "manager", colors, color_config, label_format_config, label_text_overrides, mode_str);
+                add_hint(&mut parts, &[manager_key], "manager", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
             }
 
             if let Some(config_key) = plugin_key(keymap, PLUGIN_CONFIGURATION) {
-                add_hint(&mut parts, &[config_key], "config", colors, color_config, label_format_config, label_text_overrides, mode_str);
+                add_hint(&mut parts, &[config_key], "config", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
             }
 
             if let Some(plugin_key_val) = plugin_key(keymap, PLUGIN_MANAGER) {
-                add_hint(&mut parts, &[plugin_key_val], "plugins", colors, color_config, label_format_config, label_text_overrides, mode_str);
+                add_hint(&mut parts, &[plugin_key_val], "plugins", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
             }
 
             if let Some(about_key) = plugin_key(keymap, PLUGIN_ABOUT) {
-                add_hint(&mut parts, &[about_key], "about", colors, color_config, label_format_config, label_text_overrides, mode_str);
+                add_hint(&mut parts, &[about_key], "about", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
             }
 
-            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &select_keys, "select", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
         }
         _ => {
             let keys =
                 find_keys_for_actions(keymap, &[Action::SwitchToMode(InputMode::Normal)], true);
-            add_hint(&mut parts, &keys, "normal", colors, color_config, label_format_config, label_text_overrides, mode_str);
+            add_hint(&mut parts, &keys, "normal", colors, color_config, label_format_config, label_text_overrides, mode_str, if common_modifiers.is_empty() { None } else { Some(&common_modifiers) });
         }
     }
 
