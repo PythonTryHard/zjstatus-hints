@@ -390,12 +390,21 @@ impl ZellijPlugin for State {
         };
 
         // Parse custom label format configuration
+        let key_format = configuration
+            .get("key_format")
+            .cloned()
+            .unwrap_or_else(|| "{combo}".to_string());
+
+        // Validate that key_format contains at least one required placeholder
+        let validated_format = if key_format.contains("{keys}") || key_format.contains("{combo}") {
+            key_format
+        } else {
+            "{combo}".to_string()
+        };
+
         self.label_format_config = LabelFormatConfig {
             defaults: LabelFormat {
-                template: configuration
-                    .get("key_format")
-                    .cloned()
-                    .unwrap_or_else(|| "{combo}".to_string()),
+                template: validated_format,
             },
             overrides: parse_label_format_overrides(&configuration),
         };
@@ -821,12 +830,16 @@ fn extract_common_modifiers_from_hints(keys: &[KeyWithModifier]) -> Vec<KeyModif
         }
     }
 
-    // Keep only modifiers that meet the threshold
-    modifier_counts
+    // Keep only modifiers that meet the threshold, then sort for deterministic output
+    let mut common_mods: Vec<KeyModifier> = modifier_counts
         .into_iter()
         .filter(|(_, count)| *count >= threshold)
         .map(|(modifier, _)| modifier)
-        .collect()
+        .collect();
+
+    // Sort to ensure deterministic output (not dependent on HashMap iteration order)
+    common_mods.sort();
+    common_mods
 }
 
 fn render_hints_for_mode(
