@@ -112,6 +112,61 @@ Color priority (highest to lowest):
 
 **Note:** When using custom colors, you should set `pipe_zjstatus_hints_rendermode "raw"` in your zjstatus configuration to ensure the ANSI color codes are rendered correctly.
 
+### Label Format Configuration
+
+Customize how keybind displays are formatted using template syntax.
+
+Global format option (applies to all hints):
+- `key_format`: Template for formatting keybindings (default: `"{combo}"`)
+
+Per-label format overrides (apply to specific hints in all modes):
+- `{label}_key_format`
+- For labels with spaces, use underscores: `split_right_key_format` for "split right"
+- Example: `select_key_format "{mods} → {keys}"` customizes the "select" hint
+
+Mode-specific format overrides (apply only in specific modes):
+- `{mode}.{label}_key_format`
+- Example: `pane.new_key_format "{combo}"` applies only to "new" in pane mode
+- Valid modes: `normal`, `pane`, `tab`, `resize`, `move`, `scroll`, `search`, `session`
+
+#### Template Placeholders
+
+- `{combo}`: Combined modifier and key display (modifiers + keys when both present, otherwise just keys)
+- `{mods}`: Modifier keys only (e.g., "Ctrl", "Ctrl-Shift")
+- `{keys}`: Keybindings only with default separator (e.g., "a|b" or "Enter")
+
+#### Examples
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Default format: shows modifiers + keys when both present, otherwise just keys
+        key_format "{combo}"
+
+        // Alternative: always show modifiers on the left, separated by arrow
+        // key_format "{mods} → {keys}"
+
+        // Per-label override: different format for "split right" hint
+        split_right_key_format "{mods}{keys}"
+
+        // Mode-specific override: use compact format only in pane mode
+        pane.move_key_format "{combo}"
+
+        // Custom separator in template
+        // This would render as "Ctrl ➜ hjkl" for a Ctrl+hjkl binding
+        // pane.move_key_format "{mods} ➜ {keys}"
+    }
+}
+```
+
+Format priority (highest to lowest):
+1. Mode-specific override (e.g., `pane.select_key_format`)
+2. Per-label override (e.g., `select_key_format`)
+3. Global format (e.g., `key_format`)
+4. Built-in default (`"{combo}"`)
+
+**Note:** Template placeholders must include at least one of `{keys}` or `{combo}` to be valid. Invalid templates are ignored and the default is used instead.
+
 ## TODO
 
 - [x] configurable colors/formatting
