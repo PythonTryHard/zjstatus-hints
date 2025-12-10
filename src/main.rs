@@ -701,8 +701,6 @@ fn style_key_with_modifier(
             .paint(format!(" {} ", formatted_combo)),
     );
 
-    styled_parts.push(Style::new().fg(contrasting_fg).on(saturated_bg).paint(" "));
-
     styled_parts
 }
 
