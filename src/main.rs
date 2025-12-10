@@ -789,20 +789,34 @@ fn mode_to_str(mode: InputMode) -> Option<&'static str> {
     }
 }
 
-/// Extract common modifiers shared across rendered hint keys
+/// Extract common modifiers from rendered hint keys using a threshold (80%)
+/// A modifier is considered "common" if it appears in at least 80% of the hint keys.
+/// This allows for some hints (like unmodified Enter for "select") to deviate without
+/// eliminating the common modifier that most hints share.
 fn extract_common_modifiers_from_hints(keys: &[KeyWithModifier]) -> Vec<KeyModifier> {
     if keys.is_empty() {
         return vec![];
     }
 
-    let mut common = keys[0].key_modifiers.clone();
-    for key in &keys[1..] {
-        common = common
-            .intersection(&key.key_modifiers)
-            .cloned()
-            .collect();
+    // Threshold: modifier must appear in at least 80% of hints to be "common"
+    let threshold = (keys.len() as f32 * 0.8).ceil() as usize;
+
+    // Count occurrences of each modifier
+    let mut modifier_counts: std::collections::HashMap<KeyModifier, usize> =
+        std::collections::HashMap::new();
+
+    for key in keys {
+        for modifier in &key.key_modifiers {
+            *modifier_counts.entry(*modifier).or_insert(0) += 1;
+        }
     }
-    common.into_iter().collect()
+
+    // Keep only modifiers that meet the threshold
+    modifier_counts
+        .into_iter()
+        .filter(|(_, count)| *count >= threshold)
+        .map(|(modifier, _)| modifier)
+        .collect()
 }
 
 fn render_hints_for_mode(
