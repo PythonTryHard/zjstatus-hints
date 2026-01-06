@@ -256,6 +256,7 @@ For more control, use individual format options. These are **mutually exclusive*
 | `modifier_separator` | Separator between modifiers | "-" |
 | `modifier_key_separator` | Separator between modifiers and key | " + " |
 | `modifier_combo_template` | Template for composing the combo string | "{mods}{sep}{key}" |
+| `key_display_separator` | Separator between multiple keys for the same action | "\|" |
 
 ##### Combo Template
 
@@ -267,6 +268,10 @@ The `modifier_combo_template` option is a template string for composing modifier
 You can include arbitrary prefix/suffix characters in the template (e.g., `<{mods}{sep}{key}>` for Vim-style).
 
 **Literal curly braces:** Only the exact placeholders `{mods}`, `{sep}`, and `{key}` are replaced. Other curly braces are preserved as-is. For example, `{{mods}}` produces `{C}` (the outer braces are literal, only the inner `{mods}` is replaced).
+
+##### Key Display Separator
+
+The `key_display_separator` option controls the separator between multiple keys bound to the same action. For example, if both `h` and `←` move left, they would be displayed as `h|←` by default, or `h / ←` with `key_display_separator " / "`.
 
 #### Examples
 

@@ -235,6 +235,8 @@ struct ModifierFormatConfig {
     key_separator: String,
     /// Template for composing the combo string (e.g., "{mods}{sep}{key}" or "<{mods}{sep}{key}>")
     combo_template: String,
+    /// Separator between multiple keys for the same action (e.g., "|", " | ", "/")
+    key_display_separator: String,
 }
 
 impl Default for ModifierFormatConfig {
@@ -247,6 +249,7 @@ impl Default for ModifierFormatConfig {
             modifier_separator: "-".to_string(),
             key_separator: " + ".to_string(),
             combo_template: "{mods}{sep}{key}".to_string(),
+            key_display_separator: "|".to_string(),
         }
     }
 }
@@ -263,6 +266,7 @@ impl ModifierFormatConfig {
                 modifier_separator: "-".to_string(),
                 key_separator: " + ".to_string(),
                 combo_template: "{mods}{sep}{key}".to_string(),
+                key_display_separator: "|".to_string(),
             },
             ModifierPreset::Brief => ModifierFormatConfig {
                 ctrl_format: "C".to_string(),
@@ -272,6 +276,7 @@ impl ModifierFormatConfig {
                 modifier_separator: "-".to_string(),
                 key_separator: "-".to_string(),
                 combo_template: "{mods}{sep}{key}".to_string(),
+                key_display_separator: "|".to_string(),
             },
             ModifierPreset::Stripped => ModifierFormatConfig {
                 ctrl_format: String::new(),
@@ -281,6 +286,7 @@ impl ModifierFormatConfig {
                 modifier_separator: String::new(),
                 key_separator: String::new(),
                 combo_template: "{key}".to_string(),
+                key_display_separator: "|".to_string(),
             },
         }
     }
@@ -305,7 +311,8 @@ fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFo
         || config.contains_key("modifier_super_format")
         || config.contains_key("modifier_separator")
         || config.contains_key("modifier_key_separator")
-        || config.contains_key("modifier_combo_template");
+        || config.contains_key("modifier_combo_template")
+        || config.contains_key("key_display_separator");
 
     if has_custom_format {
         // Use custom format options, starting from defaults
@@ -339,6 +346,10 @@ fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFo
                 .get("modifier_combo_template")
                 .cloned()
                 .unwrap_or(defaults.combo_template),
+            key_display_separator: config
+                .get("key_display_separator")
+                .cloned()
+                .unwrap_or(defaults.key_display_separator),
         }
     } else {
         // Use preset (default to "full" if not specified or invalid)
@@ -781,36 +792,53 @@ fn format_modifier_string(modifiers: &[KeyModifier], config: &ModifierFormatConf
 fn format_key_display(
     key_bindings: &[KeyWithModifier],
     common_modifiers: &[KeyModifier],
+    modifier_config: &ModifierFormatConfig,
 ) -> Vec<String> {
     key_bindings
         .iter()
         .map(|key| {
             if common_modifiers.is_empty() {
-                format!("{}", key)
+                // No common modifiers - format each key with its full modifiers
+                let key_modifiers: Vec<KeyModifier> = key.key_modifiers.iter().cloned().collect();
+                let modifier_str = format_modifier_string(&key_modifiers, modifier_config);
+                if modifier_str.is_empty() {
+                    format!("{}", key.bare_key)
+                } else {
+                    // Use the combo template for proper formatting
+                    modifier_config.combo_template
+                        .replace("{mods}", &modifier_str)
+                        .replace("{sep}", &modifier_config.key_separator)
+                        .replace("{key}", &format!("{}", key.bare_key))
+                }
             } else {
-                let unique_modifiers = key
+                // Has common modifiers - only show unique modifiers per key
+                let unique_modifiers: Vec<KeyModifier> = key
                     .key_modifiers
                     .iter()
                     .filter(|m| !common_modifiers.contains(m))
-                    .map(|m| m.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                if unique_modifiers.is_empty() {
+                    .cloned()
+                    .collect();
+                let modifier_str = format_modifier_string(&unique_modifiers, modifier_config);
+                if modifier_str.is_empty() {
                     format!("{}", key.bare_key)
                 } else {
-                    format!("{} {}", unique_modifiers, key.bare_key)
+                    // Use the combo template for proper formatting
+                    modifier_config.combo_template
+                        .replace("{mods}", &modifier_str)
+                        .replace("{sep}", &modifier_config.key_separator)
+                        .replace("{key}", &format!("{}", key.bare_key))
                 }
             }
         })
         .collect()
 }
 
-fn get_key_separator(key_display: &[String]) -> &'static str {
+fn get_key_separator<'a>(key_display: &[String], modifier_config: &'a ModifierFormatConfig) -> &'a str {
     let key_string = key_display.join("");
     if KEY_PATTERNS_NO_SEPARATOR.contains(&&key_string[..]) {
         ""
     } else {
-        "|"
+        &modifier_config.key_display_separator
     }
 }
 
@@ -884,8 +912,8 @@ fn style_key_with_modifier(
     };
 
     let modifier_str = format_modifier_string(&display_modifiers, modifier_format_config);
-    let key_display = format_key_display(key_bindings, &common_modifiers);
-    let key_separator = get_key_separator(&key_display);
+    let key_display = format_key_display(key_bindings, &common_modifiers, modifier_format_config);
+    let key_separator = get_key_separator(&key_display, modifier_format_config);
 
     // Get the format template for this label
     let template = get_format_for_label(label_format_config, mode, label);
@@ -1562,6 +1590,7 @@ mod tests {
             modifier_separator: "".to_string(),
             key_separator: "".to_string(),
             combo_template: "{mods}{key}".to_string(),
+            key_display_separator: "|".to_string(),
         };
         let modifiers = vec![KeyModifier::Ctrl];
         let result = format_modifier_string(&modifiers, &config);
@@ -1612,6 +1641,7 @@ mod tests {
             modifier_separator: "".to_string(),
             key_separator: "".to_string(),
             combo_template: "{mods}{sep}{key}".to_string(),
+            key_display_separator: "|".to_string(),
         };
         let result = substitute_format_template("{combo}", "^", &keys, "", &config);
         assert_eq!(result, "^q");
@@ -1628,6 +1658,7 @@ mod tests {
             modifier_separator: "".to_string(),
             key_separator: "".to_string(),
             combo_template: "{key}{sep}{mods}".to_string(),
+            key_display_separator: "|".to_string(),
         };
         let result = substitute_format_template("{combo}", "^", &keys, "", &config);
         assert_eq!(result, "q^");
@@ -1645,6 +1676,7 @@ mod tests {
             modifier_separator: "".to_string(),
             key_separator: "-".to_string(),
             combo_template: "<{mods}{sep}{key}>".to_string(),
+            key_display_separator: "|".to_string(),
         };
         let result = substitute_format_template("{combo}", "CMS", &keys, "", &config);
         assert_eq!(result, "<CMS-q>");
@@ -1662,6 +1694,7 @@ mod tests {
             modifier_separator: "".to_string(),
             key_separator: "-".to_string(),
             combo_template: "<{mods}{sep}{key}>".to_string(),
+            key_display_separator: "|".to_string(),
         };
         // When modifier_str is empty, the combo just returns the key
         let result = substitute_format_template("{combo}", "", &keys, "", &config);
