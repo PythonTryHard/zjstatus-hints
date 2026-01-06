@@ -99,16 +99,22 @@ Per-label color overrides (apply to specific hints in all modes):
 - For labels with spaces, use underscores: `split_right_key_bg` for "split right"
 - Example: `select_key_bg "#FF0000"` applies to the "select" hint everywhere
 
-Mode-specific color overrides (apply only in specific modes):
-- `{mode}.{label}_key_fg`, `{mode}.{label}_key_bg`, etc.
-- Example: `pane.new_key_bg "#00FF00"` applies only to "new" in pane mode
+Mode-global color defaults (apply to all hints in a specific mode):
+- `{mode}.key_fg`, `{mode}.key_bg`, `{mode}.label_fg`, `{mode}.label_bg`
+- Example: `pane.key_bg "#00FF00"` applies to all hints in pane mode
 - Valid modes: `normal`, `pane`, `tab`, `resize`, `move`, `scroll`, `search`, `session`
 
+Mode+label specific color overrides (apply to a specific hint in a specific mode):
+- `{mode}.{label}_key_fg`, `{mode}.{label}_key_bg`, etc.
+- Example: `pane.new_key_bg "#FF0000"` applies only to "new" hint in pane mode
+- For labels with spaces, use underscores: `pane.split_right_key_bg` for "split right" in pane mode
+
 Color priority (highest to lowest):
-1. Mode-specific override (e.g., `pane.select_key_bg`)
-2. Per-label override (e.g., `select_key_bg`)
-3. Global color (e.g., `key_bg`)
-4. Zellij theme colors (`ribbon_unselected` for keys, `text_unselected` for labels)
+1. Mode+label specific override (e.g., `pane.select_key_bg`)
+2. Mode-global default (e.g., `pane.key_bg`)
+3. Per-label override (e.g., `select_key_bg`)
+4. Global color (e.g., `key_bg`)
+5. Zellij theme colors (`ribbon_unselected` for keys, `text_unselected` for labels)
 
 **Note:** When using custom colors, you should set `pipe_zjstatus_hints_rendermode "raw"` in your zjstatus configuration to ensure the ANSI color codes are rendered correctly.
 
@@ -125,15 +131,21 @@ Per-label text overrides (apply to specific hints in all modes):
 - Example: `pane_label_text "ｐ"` replaces "pane" with "ｐ" (unicode fullwidth character)
 - Supports unicode glyphs: `new_label_text "✨"`, `close_label_text "✕"`, etc.
 
-Mode-specific label text overrides (apply only in specific modes):
-- `{mode}.{label}_label_text`
-- Example: `pane.new_label_text "ｎ"` applies only to "new" in pane mode
+Mode-global label text defaults (apply to all hints in a specific mode):
+- `{mode}.label_text`
+- Example: `pane.label_text "→"` sets default text for all hints in pane mode
 - Valid modes: `normal`, `pane`, `tab`, `resize`, `move`, `scroll`, `search`, `session`
 
+Mode+label specific label text overrides (apply to a specific hint in a specific mode):
+- `{mode}.{label}_label_text`
+- Example: `pane.new_label_text "ｎ"` applies only to "new" hint in pane mode
+- For labels with spaces, use underscores: `pane.split_right_label_text`
+
 Label text priority (highest to lowest):
-1. Mode-specific override (e.g., `pane.new_label_text`)
-2. Per-label override (e.g., `new_label_text`)
-3. Default label from Zellij (e.g., "new")
+1. Mode+label specific override (e.g., `pane.new_label_text`)
+2. Mode-global default (e.g., `pane.label_text`)
+3. Per-label override (e.g., `new_label_text`)
+4. Default label from Zellij (e.g., "new")
 
 #### Label Text Examples
 
@@ -179,10 +191,15 @@ Per-label format overrides (apply to specific hints in all modes):
 - For labels with spaces, use underscores: `split_right_key_format` for "split right"
 - Example: `select_key_format "{mods} → {keys}"` customizes the "select" hint
 
-Mode-specific format overrides (apply only in specific modes):
-- `{mode}.{label}_key_format`
-- Example: `pane.new_key_format "{combo}"` applies only to "new" in pane mode
+Mode-global format defaults (apply to all hints in a specific mode):
+- `{mode}.key_format`
+- Example: `pane.key_format "{mods} + {keys}"` applies to all hints in pane mode
 - Valid modes: `normal`, `pane`, `tab`, `resize`, `move`, `scroll`, `search`, `session`
+
+Mode+label specific format overrides (apply to a specific hint in a specific mode):
+- `{mode}.{label}_key_format`
+- Example: `pane.new_key_format "{combo}"` applies only to "new" hint in pane mode
+- For labels with spaces, use underscores: `pane.split_right_key_format`
 
 #### Template Placeholders
 
@@ -204,7 +221,10 @@ plugins {
         // Per-label override: different format for "split right" hint
         split_right_key_format "{mods}{keys}"
 
-        // Mode-specific override: use compact format only in pane mode
+        // Mode-global default: use this format for all hints in pane mode
+        pane.key_format "{mods} + {keys}"
+
+        // Mode+label specific override: use compact format only for "move" in pane mode
         pane.move_key_format "{combo}"
 
         // Custom separator in template
@@ -215,9 +235,10 @@ plugins {
 ```
 
 Format priority (highest to lowest):
-1. Mode-specific override (e.g., `pane.select_key_format`)
-2. Per-label override (e.g., `select_key_format`)
-3. Global format (e.g., `key_format`)
+1. Mode+label specific override (e.g., `pane.select_key_format`)
+2. Mode-global default (e.g., `pane.key_format`)
+3. Per-label override (e.g., `select_key_format`)
+4. Global format (e.g., `key_format`)
 4. Built-in default (`"{combo}"`)
 
 **Note:** Template placeholders must include at least one of `{keys}` or `{combo}` to be valid. Invalid templates are ignored and the default is used instead.
