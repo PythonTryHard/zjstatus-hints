@@ -257,6 +257,11 @@ For more control, use individual format options. These are **mutually exclusive*
 | `modifier_key_separator` | Separator between modifiers and key | " + " |
 | `modifier_combo_template` | Template for composing the combo string | "{mods}{sep}{key}" |
 | `key_display_separator` | Separator between multiple keys for the same action | "\|" |
+| `show_modifier_badge` | Show common modifiers as a separate badge (true/false) | "true" |
+
+##### Show Modifier Badge
+
+By default, when all hints share a common modifier (like Ctrl), it's displayed as a separate badge: `[Ctrl] [p][pane] [t][tab]`. Set `show_modifier_badge "false"` to include modifiers in each hint instead: `[Ctrl + p][pane] [Ctrl + t][tab]`.
 
 ##### Combo Template
 
