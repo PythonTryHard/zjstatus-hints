@@ -224,31 +224,12 @@ Format priority (highest to lowest):
 
 ### Modifier Format Configuration
 
-Customize how modifier keys (Ctrl, Alt, Shift, Super) are displayed.
+Customize how modifier keys (Ctrl, Alt, Shift, Super) are displayed. Each option falls back to its default if not specified. To explicitly use an empty string, set the value to `""`.
 
-#### Presets
+#### Format Options
 
-Use `modifier_preset` to quickly apply a predefined format:
-
-- `full` (default): Full modifier names - "Ctrl + q", "Ctrl-Alt + x"
-- `brief`: Short modifier names - "C-q", "C-A-x"
-- `stripped`: No modifiers shown - just the key "q", "x"
-
-```kdl
-plugins {
-    zjstatus-hints location="..." {
-        // Use brief modifier format
-        modifier_preset "brief"  // Results in "C-q" instead of "Ctrl + q"
-    }
-}
-```
-
-#### Custom Format Options
-
-For more control, use individual format options. These are **mutually exclusive** with presets - if any custom option is specified, the preset is ignored.
-
-| Option | Description | Default (Full) |
-|--------|-------------|----------------|
+| Option | Description | Default |
+|--------|-------------|---------|
 | `modifier_ctrl_format` | Format for Ctrl modifier | "Ctrl" |
 | `modifier_alt_format` | Format for Alt modifier | "Alt" |
 | `modifier_shift_format` | Format for Shift modifier | "Shift" |
@@ -274,6 +255,19 @@ You can include arbitrary prefix/suffix characters in the template (e.g., `<{mod
 The `key_display_separator` option controls the separator between multiple keys bound to the same action. For example, if both `h` and `←` move left, they would be displayed as `h|←` by default, or `h / ←` with `key_display_separator " / "`.
 
 #### Examples
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Brief style: C-q, C-A-x
+        modifier_ctrl_format "C"
+        modifier_alt_format "A"
+        modifier_shift_format "S"
+        modifier_super_format "M"
+        modifier_key_separator "-"
+    }
+}
+```
 
 ```kdl
 plugins {
