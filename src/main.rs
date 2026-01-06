@@ -202,9 +202,9 @@ struct LabelFormatConfig {
 enum ModifierPreset {
     /// Full modifier names: "Ctrl", "Alt", "Shift", "Super"
     Full,
-    /// Brief modifier names: "C", "A", "S", "M" (Meta for Super)
+    /// Brief modifier names: "C", "A", "S", "M" (using M for Super as a common convention)
     Brief,
-    /// Stripped: hide modifiers entirely
+    /// Stripped: displays only the key without any modifier prefix (e.g., just "q" instead of "Ctrl + q")
     Stripped,
 }
 
@@ -221,10 +221,6 @@ impl Default for ModifierPreset {
 /// 2. Custom mode: Define custom formats for each modifier
 #[derive(Clone)]
 struct ModifierFormatConfig {
-    /// Preset format (None if using custom format)
-    /// Kept for potential future use (e.g., debugging, serialization)
-    #[allow(dead_code)]
-    preset: Option<ModifierPreset>,
     /// Custom format for Ctrl modifier (e.g., "^", "C", "Ctrl")
     ctrl_format: String,
     /// Custom format for Alt modifier (e.g., "A", "Alt", "M")
@@ -244,7 +240,6 @@ struct ModifierFormatConfig {
 impl Default for ModifierFormatConfig {
     fn default() -> Self {
         ModifierFormatConfig {
-            preset: Some(ModifierPreset::Full),
             ctrl_format: "Ctrl".to_string(),
             alt_format: "Alt".to_string(),
             shift_format: "Shift".to_string(),
@@ -261,7 +256,6 @@ impl ModifierFormatConfig {
     fn from_preset(preset: ModifierPreset) -> Self {
         match preset {
             ModifierPreset::Full => ModifierFormatConfig {
-                preset: Some(ModifierPreset::Full),
                 ctrl_format: "Ctrl".to_string(),
                 alt_format: "Alt".to_string(),
                 shift_format: "Shift".to_string(),
@@ -271,7 +265,6 @@ impl ModifierFormatConfig {
                 format_order: "{mods}{sep}{key}".to_string(),
             },
             ModifierPreset::Brief => ModifierFormatConfig {
-                preset: Some(ModifierPreset::Brief),
                 ctrl_format: "C".to_string(),
                 alt_format: "A".to_string(),
                 shift_format: "S".to_string(),
@@ -281,7 +274,6 @@ impl ModifierFormatConfig {
                 format_order: "{mods}{sep}{key}".to_string(),
             },
             ModifierPreset::Stripped => ModifierFormatConfig {
-                preset: Some(ModifierPreset::Stripped),
                 ctrl_format: String::new(),
                 alt_format: String::new(),
                 shift_format: String::new(),
@@ -319,7 +311,6 @@ fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFo
         // Use custom format options, starting from defaults
         let defaults = ModifierFormatConfig::default();
         ModifierFormatConfig {
-            preset: None, // Custom format, no preset
             ctrl_format: config
                 .get("modifier_ctrl_format")
                 .cloned()
@@ -774,8 +765,14 @@ fn format_modifier_string(modifiers: &[KeyModifier], config: &ModifierFormatConf
     } else {
         modifiers
             .iter()
-            .map(|m| format_modifier(m, config))
-            .filter(|s| !s.is_empty()) // Skip empty modifiers (e.g., in stripped preset)
+            .filter_map(|m| {
+                let formatted = format_modifier(m, config);
+                if formatted.is_empty() {
+                    None
+                } else {
+                    Some(formatted)
+                }
+            })
             .collect::<Vec<_>>()
             .join(&config.modifier_separator)
     }
@@ -1558,7 +1555,6 @@ mod tests {
     #[test]
     fn test_format_modifier_string_custom() {
         let config = ModifierFormatConfig {
-            preset: None,
             ctrl_format: "^".to_string(),
             alt_format: "M".to_string(),
             shift_format: "S".to_string(),
@@ -1603,14 +1599,12 @@ mod tests {
         assert_eq!(result.key_separator, "");
         // Other values should use defaults
         assert_eq!(result.alt_format, "Alt");
-        assert!(result.preset.is_none());
     }
 
     #[test]
     fn test_substitute_format_template_with_custom_format_order() {
         let keys = vec!["q".to_string()];
         let config = ModifierFormatConfig {
-            preset: None,
             ctrl_format: "^".to_string(),
             alt_format: "A".to_string(),
             shift_format: "S".to_string(),
@@ -1627,7 +1621,6 @@ mod tests {
     fn test_substitute_format_template_with_reversed_order() {
         let keys = vec!["q".to_string()];
         let config = ModifierFormatConfig {
-            preset: None,
             ctrl_format: "^".to_string(),
             alt_format: "A".to_string(),
             shift_format: "S".to_string(),
