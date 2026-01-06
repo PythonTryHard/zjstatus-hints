@@ -73,37 +73,49 @@ fn parse_hex_color(s: &str) -> Option<ansi_term::Colour> {
 fn parse_label_text_overrides(config: &BTreeMap<String, String>) -> (HashMap<String, String>, HashMap<String, String>) {
     let mut mode_defaults = HashMap::new();
     let mut overrides = HashMap::new();
-    const LABEL_TEXT_SUFFIX: &str = "_label_text";
+    const TEXT_PATTERN: &str = "label_text";
 
     for (key, value) in config.iter() {
-        if key.ends_with(LABEL_TEXT_SUFFIX) {
-            let label_name = key.trim_end_matches(LABEL_TEXT_SUFFIX);
-            if label_name.is_empty() || value.trim().is_empty() {
+        if key.ends_with(TEXT_PATTERN) {
+            // Check if there's a separator before the pattern
+            let prefix_len = key.len() - TEXT_PATTERN.len();
+            if prefix_len == 0 || value.trim().is_empty() {
+                // Global config like "label_text" or empty value
+                continue;
+            }
+            
+            let separator = &key[prefix_len - 1..prefix_len];
+            if separator != "_" && separator != "." {
+                continue;
+            }
+            
+            let label_name = &key[..prefix_len - 1];
+            if label_name.is_empty() {
                 continue;
             }
 
-            // Extract property name from suffix (e.g., "label" from "_label_text")
-            let property = "label"; // For text, it's always "label"
-
-            // Check if this is a mode-specific key (contains a dot)
-            if let Some(dot_pos) = label_name.find('.') {
-                // Mode-specific key
-                let mode = &label_name[..dot_pos];
-                let label = &label_name[dot_pos + 1..];
-                if mode.is_empty() {
-                    continue;
-                }
-
-                if label == property {
-                    // Mode-global: "pane.label" from "pane.label_text" -> default label text for pane mode
-                    mode_defaults.insert(mode.to_string(), value.clone());
-                } else {
-                    // Mode+label specific: "pane.new" or "pane.split_right" -> "pane.new" or "pane.split right"
+            // Check separator to determine if this is mode-specific
+            if separator == "." {
+                // Mode-specific: separator is dot
+                // Format: {mode}.{property/label}_{pattern}
+                
+                if let Some(dot_pos) = label_name.rfind('.') {
+                    // Has another dot: "pane.new" -> mode="pane", label="new"
+                    let mode = &label_name[..dot_pos];
+                    let label = &label_name[dot_pos + 1..];
+                    if mode.is_empty() || label.is_empty() {
+                        continue;
+                    }
+                    
+                    // Mode+label specific
                     let label_key = format!("{}.{}", mode, label.replace('_', " "));
                     overrides.insert(label_key, value.clone());
+                } else {
+                    // No other dot: "pane" from "pane.label_text" -> mode-global
+                    mode_defaults.insert(label_name.to_string(), value.clone());
                 }
             } else {
-                // Label-only: "pane" or "split_right" -> "pane" or "split right"
+                // Label-only: separator is underscore
                 let label_key = label_name.replace('_', " ");
                 
                 // Skip whitespace-only labels
@@ -157,70 +169,79 @@ fn get_label_text(overrides: &HashMap<String, String>, mode_defaults: &HashMap<S
 fn parse_label_overrides(config: &BTreeMap<String, String>) -> (HashMap<String, LabelColors>, HashMap<String, LabelColors>) {
     let mut mode_defaults = HashMap::new();
     let mut overrides = HashMap::new();
-    let color_suffixes = ["_key_fg", "_key_bg", "_label_fg", "_label_bg"];
+    let color_patterns = [("key_fg", 0), ("key_bg", 1), ("label_fg", 2), ("label_bg", 3)];
 
     for (key, value) in config.iter() {
-        for suffix in &color_suffixes {
-            if key.ends_with(suffix) {
-                let label_name = key.trim_end_matches(suffix);
-                if label_name.is_empty() || label_name == "key" || label_name == "label" {
+        for (pattern, field_idx) in &color_patterns {
+            if key.ends_with(pattern) {
+                // Check if there's a separator before the pattern
+                let prefix_len = key.len() - pattern.len();
+                if prefix_len == 0 {
+                    // Global config like "key_fg"
+                    continue;
+                }
+                
+                let separator = &key[prefix_len - 1..prefix_len];
+                if separator != "_" && separator != "." {
+                    continue;
+                }
+                
+                let label_name = &key[..prefix_len - 1];
+                if label_name.is_empty() {
                     continue;
                 }
 
-                // Extract property name from suffix (e.g., "key" from "_key_fg")
-                let property = suffix.trim_start_matches('_').split('_').next().unwrap();
-
-                // Check if this is a mode-specific key (contains a dot)
-                if let Some(dot_pos) = label_name.find('.') {
-                    // Mode-specific key
-                    let mode = &label_name[..dot_pos];
-                    let label = &label_name[dot_pos + 1..];
-                    if mode.is_empty() {
-                        continue;
-                    }
-
-                    // Only insert entry if color parses successfully
-                    if let Some(color) = parse_hex_color(value) {
-                        if label == property {
-                            // Mode-global: "pane.key" from "pane.key_fg" -> applies to all labels in pane mode
-                            let entry = mode_defaults.entry(mode.to_string()).or_insert_with(LabelColors::default);
-                            match *suffix {
-                                "_key_fg" => entry.key_fg = Some(color),
-                                "_key_bg" => entry.key_bg = Some(color),
-                                "_label_fg" => entry.label_fg = Some(color),
-                                "_label_bg" => entry.label_bg = Some(color),
+                // Only insert entry if color parses successfully
+                if let Some(color) = parse_hex_color(value) {
+                    // Check separator to determine if this is mode-specific
+                    if separator == "." {
+                        // Mode-specific: separator is dot
+                        // Format: {mode}.{property/label}_{pattern}
+                        
+                        if let Some(dot_pos) = label_name.rfind('.') {
+                            // Has another dot: "pane.select" -> mode="pane", label="select"
+                            let mode = &label_name[..dot_pos];
+                            let label = &label_name[dot_pos + 1..];
+                            if mode.is_empty() || label.is_empty() {
+                                continue;
+                            }
+                            
+                            // Mode+label specific
+                            let label_key = format!("{}.{}", mode, label.replace('_', " "));
+                            let entry = overrides.entry(label_key).or_insert_with(LabelColors::default);
+                            match field_idx {
+                                0 => entry.key_fg = Some(color),
+                                1 => entry.key_bg = Some(color),
+                                2 => entry.label_fg = Some(color),
+                                3 => entry.label_bg = Some(color),
                                 _ => {}
                             }
                         } else {
-                            // Mode+label specific: "pane.select" or "pane.split_right" -> "pane.select" or "pane.split right"
-                            let label_key = format!("{}.{}", mode, label.replace('_', " "));
-                            let entry = overrides.entry(label_key).or_insert_with(LabelColors::default);
-                            match *suffix {
-                                "_key_fg" => entry.key_fg = Some(color),
-                                "_key_bg" => entry.key_bg = Some(color),
-                                "_label_fg" => entry.label_fg = Some(color),
-                                "_label_bg" => entry.label_bg = Some(color),
+                            // No other dot: "pane" from "pane.key_fg" -> mode-global
+                            let entry = mode_defaults.entry(label_name.to_string()).or_insert_with(LabelColors::default);
+                            match field_idx {
+                                0 => entry.key_fg = Some(color),
+                                1 => entry.key_bg = Some(color),
+                                2 => entry.label_fg = Some(color),
+                                3 => entry.label_bg = Some(color),
                                 _ => {}
                             }
                         }
-                    }
-                } else {
-                    // Label-only: "select" or "split_right" -> "select" or "split right"
-                    let label_key = label_name.replace('_', " ");
-                    
-                    // Skip whitespace-only labels (e.g., "__key_bg" -> "  ")
-                    if label_key.trim().is_empty() {
-                        continue;
-                    }
-                    
-                    // Only insert entry if color parses successfully
-                    if let Some(color) = parse_hex_color(value) {
+                    } else {
+                        // Label-only: separator is underscore
+                        let label_key = label_name.replace('_', " ");
+                        
+                        // Skip whitespace-only labels
+                        if label_key.trim().is_empty() {
+                            continue;
+                        }
+                        
                         let entry = overrides.entry(label_key).or_insert_with(LabelColors::default);
-                        match *suffix {
-                            "_key_fg" => entry.key_fg = Some(color),
-                            "_key_bg" => entry.key_bg = Some(color),
-                            "_label_fg" => entry.label_fg = Some(color),
-                            "_label_bg" => entry.label_bg = Some(color),
+                        match field_idx {
+                            0 => entry.key_fg = Some(color),
+                            1 => entry.key_bg = Some(color),
+                            2 => entry.label_fg = Some(color),
+                            3 => entry.label_bg = Some(color),
                             _ => {}
                         }
                     }
@@ -364,12 +385,24 @@ fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFo
 fn parse_label_format_overrides(config: &BTreeMap<String, String>) -> (HashMap<String, LabelFormat>, HashMap<String, LabelFormat>) {
     let mut mode_defaults = HashMap::new();
     let mut overrides = HashMap::new();
-    const FORMAT_SUFFIX: &str = "_key_format";
+    const FORMAT_PATTERN: &str = "key_format";
 
     for (key, value) in config.iter() {
-        if key.ends_with(FORMAT_SUFFIX) {
-            let label_name = key.trim_end_matches(FORMAT_SUFFIX);
-            if label_name.is_empty() || label_name == "key" {
+        if key.ends_with(FORMAT_PATTERN) {
+            // Check if there's a separator before the pattern
+            let prefix_len = key.len() - FORMAT_PATTERN.len();
+            if prefix_len == 0 {
+                // Global config like "key_format"
+                continue;
+            }
+            
+            let separator = &key[prefix_len - 1..prefix_len];
+            if separator != "_" && separator != "." {
+                continue;
+            }
+            
+            let label_name = &key[..prefix_len - 1];
+            if label_name.is_empty() {
                 continue;
             }
 
@@ -378,32 +411,37 @@ fn parse_label_format_overrides(config: &BTreeMap<String, String>) -> (HashMap<S
                 continue;
             }
 
-            // Extract property name from suffix (e.g., "key" from "_key_format")
-            let property = "key"; // For format, it's always "key"
-
-            // Check if this is a mode-specific key (contains a dot)
-            if let Some(dot_pos) = label_name.find('.') {
-                // Mode-specific key
-                let mode = &label_name[..dot_pos];
-                let label = &label_name[dot_pos + 1..];
-                if mode.is_empty() {
-                    continue;
-                }
-
-                if label == property {
-                    // Mode-global: "pane.key" from "pane.key_format" -> applies to all labels in pane mode
-                    mode_defaults.insert(mode.to_string(), LabelFormat {
-                        template: value.clone(),
-                    });
-                } else {
-                    // Mode+label specific: "pane.select" or "pane.split_right" -> "pane.select" or "pane.split right"
+            // Check separator to determine if this is mode-specific
+            if separator == "." {
+                // Mode-specific: separator is dot
+                // Format: {mode}.{property/label}_{pattern}
+                // e.g., "pane.key_format" or "pane.select_key_format"
+                
+                // label_name is now "pane" or "pane.select" (if there are nested dots)
+                // We need to split on the LAST dot to separate mode from label
+                if let Some(dot_pos) = label_name.rfind('.') {
+                    // Has another dot: "pane.select" -> mode="pane", label="select"
+                    let mode = &label_name[..dot_pos];
+                    let label = &label_name[dot_pos + 1..];
+                    if mode.is_empty() || label.is_empty() {
+                        continue;
+                    }
+                    
+                    // Mode+label specific
                     let label_key = format!("{}.{}", mode, label.replace('_', " "));
                     overrides.insert(label_key, LabelFormat {
                         template: value.clone(),
                     });
+                } else {
+                    // No other dot: "pane" from "pane.key_format" -> mode-global
+                    // This means the original key was "{mode}.{property}_{pattern}"
+                    mode_defaults.insert(label_name.to_string(), LabelFormat {
+                        template: value.clone(),
+                    });
                 }
             } else {
-                // Label-only: "select" or "split_right" -> "select" or "split right"
+                // Label-only: separator is underscore
+                // Format: {label}_{pattern}
                 let label_key = label_name.replace('_', " ");
                 
                 // Skip whitespace-only labels
