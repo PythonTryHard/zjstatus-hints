@@ -1133,6 +1133,7 @@ fn mode_to_str(mode: InputMode) -> Option<&'static str> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_hints_for_mode(
     mode: InputMode,
     keymap: &[(KeyWithModifier, Vec<Action>)],
