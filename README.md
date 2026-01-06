@@ -33,6 +33,11 @@ plugins {
         // you can hide hints in the locked mode by setting this to true
         hide_in_base_mode false // default
 
+        // Hide shared keybinds (select, scroll, page, etc.) to reduce clutter
+        // hide_shared_keybinds false // default
+        // Hide specific keybinds (comma-separated)
+        // hidden_keybinds "select,scroll"
+
         // Custom colors (hex format: "#RRGGBB" or "RRGGBB")
         // These override the default Zellij theme colors
         // key_fg "#000000"   // Foreground color for keybinding badges
@@ -85,6 +90,48 @@ layout {
 - `overflow_str`: String to append when truncated (default: "...")
 - `pipe_name`: Name of the pipe for zjstatus integration (default: "zjstatus_hints")
 - `hide_in_base_mode`: Hide hints in base mode (a.k.a. default mode) (default: false)
+
+### Hide Shared Keybinds
+
+Control which keybindings are displayed to reduce visual clutter:
+
+- `hide_shared_keybinds`: Boolean to hide common shared keybinds (default: false)
+  - When enabled, hides: `select`, `scroll`, `page`, `half page`, `search`
+  - These are keybinds that appear in multiple modes and are often redundant
+- `hidden_keybinds`: Comma-separated list of specific keybinds to hide
+  - Example: `hidden_keybinds "move,resize,quit"` 
+  - For labels with spaces, use the exact label text: `hidden_keybinds "split right,half page"`
+  - Can be combined with `hide_shared_keybinds` to hide additional keybinds
+
+#### Examples
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Hide all common shared keybinds
+        hide_shared_keybinds true
+    }
+}
+```
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Hide specific keybinds only
+        hidden_keybinds "select,scroll"
+    }
+}
+```
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Hide shared keybinds plus additional custom ones
+        hide_shared_keybinds true
+        hidden_keybinds "move,rename"
+    }
+}
+```
 
 ### Color Configuration
 
