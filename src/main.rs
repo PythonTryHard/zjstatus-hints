@@ -237,9 +237,6 @@ struct ModifierFormatConfig {
     combo_template: String,
     /// Separator between multiple keys for the same action (e.g., "|", " | ", "/")
     key_display_separator: String,
-    /// Whether to show common modifiers as a separate badge (default: true for backward compatibility)
-    /// When false, each hint shows its full keybinding including modifiers
-    show_modifier_badge: bool,
 }
 
 impl Default for ModifierFormatConfig {
@@ -253,7 +250,6 @@ impl Default for ModifierFormatConfig {
             key_separator: " + ".to_string(),
             combo_template: "{mods}{sep}{key}".to_string(),
             key_display_separator: "|".to_string(),
-            show_modifier_badge: true,
         }
     }
 }
@@ -271,7 +267,6 @@ impl ModifierFormatConfig {
                 key_separator: " + ".to_string(),
                 combo_template: "{mods}{sep}{key}".to_string(),
                 key_display_separator: "|".to_string(),
-                show_modifier_badge: true,
             },
             ModifierPreset::Brief => ModifierFormatConfig {
                 ctrl_format: "C".to_string(),
@@ -282,7 +277,6 @@ impl ModifierFormatConfig {
                 key_separator: "-".to_string(),
                 combo_template: "{mods}{sep}{key}".to_string(),
                 key_display_separator: "|".to_string(),
-                show_modifier_badge: true,
             },
             ModifierPreset::Stripped => ModifierFormatConfig {
                 ctrl_format: String::new(),
@@ -293,7 +287,6 @@ impl ModifierFormatConfig {
                 key_separator: String::new(),
                 combo_template: "{key}".to_string(),
                 key_display_separator: "|".to_string(),
-                show_modifier_badge: true,
             },
         }
     }
@@ -319,8 +312,7 @@ fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFo
         || config.contains_key("modifier_separator")
         || config.contains_key("modifier_key_separator")
         || config.contains_key("modifier_combo_template")
-        || config.contains_key("key_display_separator")
-        || config.contains_key("show_modifier_badge");
+        || config.contains_key("key_display_separator");
 
     if has_custom_format {
         // Use custom format options, starting from defaults
@@ -358,10 +350,6 @@ fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFo
                 .get("key_display_separator")
                 .cloned()
                 .unwrap_or(defaults.key_display_separator),
-            show_modifier_badge: config
-                .get("show_modifier_badge")
-                .map(|s| s.to_lowercase() == "true")
-                .unwrap_or(defaults.show_modifier_badge),
         }
     } else {
         // Use preset (default to "full" if not specified or invalid)
@@ -1030,40 +1018,6 @@ fn mode_to_str(mode: InputMode) -> Option<&'static str> {
     }
 }
 
-/// Extract common modifiers from rendered hint keys using a threshold (80%)
-/// A modifier is considered "common" if it appears in at least 80% of the hint keys.
-/// This allows for some hints (like unmodified Enter for "select") to deviate without
-/// eliminating the common modifier that most hints share.
-fn extract_common_modifiers_from_hints(keys: &[KeyWithModifier]) -> Vec<KeyModifier> {
-    if keys.is_empty() {
-        return vec![];
-    }
-
-    // Threshold: modifier must appear in at least 80% of hints to be "common"
-    let threshold = (keys.len() as f32 * 0.8).ceil() as usize;
-
-    // Count occurrences of each modifier
-    let mut modifier_counts: std::collections::HashMap<KeyModifier, usize> =
-        std::collections::HashMap::new();
-
-    for key in keys {
-        for modifier in &key.key_modifiers {
-            *modifier_counts.entry(*modifier).or_insert(0) += 1;
-        }
-    }
-
-    // Keep only modifiers that meet the threshold, then sort for deterministic output
-    let mut common_mods: Vec<KeyModifier> = modifier_counts
-        .into_iter()
-        .filter(|(_, count)| *count >= threshold)
-        .map(|(modifier, _)| modifier)
-        .collect();
-
-    // Sort to ensure deterministic output (not dependent on HashMap iteration order)
-    common_mods.sort();
-    common_mods
-}
-
 fn render_hints_for_mode(
     mode: InputMode,
     keymap: &[(KeyWithModifier, Vec<Action>)],
@@ -1354,42 +1308,7 @@ fn render_hints_for_mode(
         }
     }
 
-    // Now extract common modifiers from only the collected hints
-    let all_rendered_keys: Vec<KeyWithModifier> = hints
-        .iter()
-        .flat_map(|(keys, _)| keys.iter().cloned())
-        .collect();
-
-    // Only extract and display common modifiers if show_modifier_badge is enabled
-    let common_modifiers = if modifier_format_config.show_modifier_badge && !all_rendered_keys.is_empty() {
-        extract_common_modifiers_from_hints(&all_rendered_keys)
-    } else {
-        vec![]
-    };
-
-    // Render the common modifier badge if present and enabled
-    if !common_modifiers.is_empty() {
-        let modifier_str = format_modifier_string(&common_modifiers, modifier_format_config);
-        let colors_for_mods = get_colors_for_label(color_config, mode_str, "");
-
-        // Use custom colors if configured, otherwise fall back to palette
-        let key_bg = colors_for_mods.key_bg
-            .unwrap_or_else(|| palette_match!(colors.ribbon_unselected.background));
-        let key_fg = colors_for_mods.key_fg
-            .unwrap_or_else(|| palette_match!(colors.ribbon_unselected.base));
-
-        // Only render the badge if modifier_str is not empty (e.g., not in stripped mode)
-        if !modifier_str.is_empty() {
-            parts.push(Style::new()
-                .fg(key_fg)
-                .on(key_bg)
-                .bold()
-                .paint(format!(" {} ", modifier_str)));
-            parts.push(Style::new().paint(" "));
-        }
-    }
-
-    // Render each hint with modifiers stripped from common ones (if badge is enabled)
+    // Render each hint with full modifiers (no stripping)
     for (keys, label) in hints {
         add_hint(
             &mut parts,
@@ -1401,11 +1320,7 @@ fn render_hints_for_mode(
             modifier_format_config,
             label_text_overrides,
             mode_str,
-            if common_modifiers.is_empty() {
-                None
-            } else {
-                Some(&common_modifiers)
-            },
+            None,
         );
     }
 
@@ -1604,7 +1519,6 @@ mod tests {
             key_separator: "".to_string(),
             combo_template: "{mods}{key}".to_string(),
             key_display_separator: "|".to_string(),
-            show_modifier_badge: true,
         };
         let modifiers = vec![KeyModifier::Ctrl];
         let result = format_modifier_string(&modifiers, &config);
@@ -1656,7 +1570,6 @@ mod tests {
             key_separator: "".to_string(),
             combo_template: "{mods}{sep}{key}".to_string(),
             key_display_separator: "|".to_string(),
-            show_modifier_badge: true,
         };
         let result = substitute_format_template("{combo}", "^", &keys, "", &config);
         assert_eq!(result, "^q");
@@ -1674,7 +1587,6 @@ mod tests {
             key_separator: "".to_string(),
             combo_template: "{key}{sep}{mods}".to_string(),
             key_display_separator: "|".to_string(),
-            show_modifier_badge: true,
         };
         let result = substitute_format_template("{combo}", "^", &keys, "", &config);
         assert_eq!(result, "q^");
@@ -1693,7 +1605,6 @@ mod tests {
             key_separator: "-".to_string(),
             combo_template: "<{mods}{sep}{key}>".to_string(),
             key_display_separator: "|".to_string(),
-            show_modifier_badge: true,
         };
         let result = substitute_format_template("{combo}", "CMS", &keys, "", &config);
         assert_eq!(result, "<CMS-q>");
@@ -1712,7 +1623,6 @@ mod tests {
             key_separator: "-".to_string(),
             combo_template: "<{mods}{sep}{key}>".to_string(),
             key_display_separator: "|".to_string(),
-            show_modifier_badge: true,
         };
         // When modifier_str is empty, the combo just returns the key
         let result = substitute_format_template("{combo}", "", &keys, "", &config);
