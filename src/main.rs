@@ -24,6 +24,8 @@ struct State {
     label_format_config: LabelFormatConfig,
     // Custom label text overrides
     label_text_overrides: HashMap<String, String>,
+    // Custom modifier format configuration
+    modifier_format_config: ModifierFormatConfig,
 }
 
 register_plugin!(State);
@@ -193,6 +195,168 @@ impl Default for LabelFormat {
 struct LabelFormatConfig {
     defaults: LabelFormat,
     overrides: HashMap<String, LabelFormat>,
+}
+
+/// Preset options for modifier formatting
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ModifierPreset {
+    /// Full modifier names: "Ctrl", "Alt", "Shift", "Super"
+    Full,
+    /// Brief modifier names: "C", "A", "S", "M" (Meta for Super)
+    Brief,
+    /// Stripped: hide modifiers entirely
+    Stripped,
+}
+
+impl Default for ModifierPreset {
+    fn default() -> Self {
+        ModifierPreset::Full
+    }
+}
+
+/// Custom modifier format configuration
+///
+/// Supports two mutually exclusive modes:
+/// 1. Preset mode: Use a predefined format (full, brief, stripped)
+/// 2. Custom mode: Define custom formats for each modifier
+#[derive(Clone)]
+struct ModifierFormatConfig {
+    /// Preset format (None if using custom format)
+    /// Kept for potential future use (e.g., debugging, serialization)
+    #[allow(dead_code)]
+    preset: Option<ModifierPreset>,
+    /// Custom format for Ctrl modifier (e.g., "^", "C", "Ctrl")
+    ctrl_format: String,
+    /// Custom format for Alt modifier (e.g., "A", "Alt", "M")
+    alt_format: String,
+    /// Custom format for Shift modifier (e.g., "S", "Shift", "⇧")
+    shift_format: String,
+    /// Custom format for Super modifier (e.g., "M", "Super", "⌘")
+    super_format: String,
+    /// Separator between modifiers (e.g., "-", "+", "")
+    modifier_separator: String,
+    /// Separator between modifiers and key (e.g., " + ", "-", "")
+    key_separator: String,
+    /// Custom format order template (e.g., "{mods}{sep}{key}" or "{key}{sep}{mods}")
+    format_order: String,
+}
+
+impl Default for ModifierFormatConfig {
+    fn default() -> Self {
+        ModifierFormatConfig {
+            preset: Some(ModifierPreset::Full),
+            ctrl_format: "Ctrl".to_string(),
+            alt_format: "Alt".to_string(),
+            shift_format: "Shift".to_string(),
+            super_format: "Super".to_string(),
+            modifier_separator: "-".to_string(),
+            key_separator: " + ".to_string(),
+            format_order: "{mods}{sep}{key}".to_string(),
+        }
+    }
+}
+
+impl ModifierFormatConfig {
+    /// Create a configuration from a preset
+    fn from_preset(preset: ModifierPreset) -> Self {
+        match preset {
+            ModifierPreset::Full => ModifierFormatConfig {
+                preset: Some(ModifierPreset::Full),
+                ctrl_format: "Ctrl".to_string(),
+                alt_format: "Alt".to_string(),
+                shift_format: "Shift".to_string(),
+                super_format: "Super".to_string(),
+                modifier_separator: "-".to_string(),
+                key_separator: " + ".to_string(),
+                format_order: "{mods}{sep}{key}".to_string(),
+            },
+            ModifierPreset::Brief => ModifierFormatConfig {
+                preset: Some(ModifierPreset::Brief),
+                ctrl_format: "C".to_string(),
+                alt_format: "A".to_string(),
+                shift_format: "S".to_string(),
+                super_format: "M".to_string(),
+                modifier_separator: "-".to_string(),
+                key_separator: "-".to_string(),
+                format_order: "{mods}{sep}{key}".to_string(),
+            },
+            ModifierPreset::Stripped => ModifierFormatConfig {
+                preset: Some(ModifierPreset::Stripped),
+                ctrl_format: String::new(),
+                alt_format: String::new(),
+                shift_format: String::new(),
+                super_format: String::new(),
+                modifier_separator: String::new(),
+                key_separator: String::new(),
+                format_order: "{key}".to_string(),
+            },
+        }
+    }
+}
+
+/// Parse modifier format preset from string
+fn parse_modifier_preset(s: &str) -> Option<ModifierPreset> {
+    match s.to_lowercase().as_str() {
+        "full" => Some(ModifierPreset::Full),
+        "brief" => Some(ModifierPreset::Brief),
+        "stripped" => Some(ModifierPreset::Stripped),
+        _ => None,
+    }
+}
+
+/// Parse modifier format configuration from plugin configuration
+fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFormatConfig {
+    // Check if custom format options are specified (mutually exclusive with preset)
+    let has_custom_format = config.contains_key("modifier_ctrl_format")
+        || config.contains_key("modifier_alt_format")
+        || config.contains_key("modifier_shift_format")
+        || config.contains_key("modifier_super_format")
+        || config.contains_key("modifier_separator")
+        || config.contains_key("modifier_key_separator")
+        || config.contains_key("modifier_format_order");
+
+    if has_custom_format {
+        // Use custom format options, starting from defaults
+        let defaults = ModifierFormatConfig::default();
+        ModifierFormatConfig {
+            preset: None, // Custom format, no preset
+            ctrl_format: config
+                .get("modifier_ctrl_format")
+                .cloned()
+                .unwrap_or(defaults.ctrl_format),
+            alt_format: config
+                .get("modifier_alt_format")
+                .cloned()
+                .unwrap_or(defaults.alt_format),
+            shift_format: config
+                .get("modifier_shift_format")
+                .cloned()
+                .unwrap_or(defaults.shift_format),
+            super_format: config
+                .get("modifier_super_format")
+                .cloned()
+                .unwrap_or(defaults.super_format),
+            modifier_separator: config
+                .get("modifier_separator")
+                .cloned()
+                .unwrap_or(defaults.modifier_separator),
+            key_separator: config
+                .get("modifier_key_separator")
+                .cloned()
+                .unwrap_or(defaults.key_separator),
+            format_order: config
+                .get("modifier_format_order")
+                .cloned()
+                .unwrap_or(defaults.format_order),
+        }
+    } else {
+        // Use preset (default to "full" if not specified or invalid)
+        let preset = config
+            .get("modifier_preset")
+            .and_then(|s| parse_modifier_preset(s))
+            .unwrap_or(ModifierPreset::Full);
+        ModifierFormatConfig::from_preset(preset)
+    }
 }
 
 /// Parse per-label format overrides from configuration
@@ -412,6 +576,9 @@ impl ZellijPlugin for State {
         // Parse custom label text overrides
         self.label_text_overrides = parse_label_text_overrides(&configuration);
 
+        // Parse custom modifier format configuration
+        self.modifier_format_config = parse_modifier_format_config(&configuration);
+
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
@@ -437,7 +604,7 @@ impl ZellijPlugin for State {
         let mode_info = &self.mode_info;
         let output = if !(self.hide_in_base_mode && Some(mode_info.mode) == mode_info.base_mode) {
             let keymap = get_keymap_for_mode(mode_info);
-            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config, &self.label_text_overrides);
+            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config, &self.modifier_format_config, &self.label_text_overrides);
 
             let ansi_strings = ANSIStrings(&parts);
             let formatted = format!(" {}", ansi_strings);
@@ -591,15 +758,26 @@ fn find_keys_for_action_groups(
         .collect()
 }
 
-fn format_modifier_string(modifiers: &[KeyModifier]) -> String {
+/// Format a single modifier according to the config
+fn format_modifier(modifier: &KeyModifier, config: &ModifierFormatConfig) -> String {
+    match modifier {
+        KeyModifier::Ctrl => config.ctrl_format.clone(),
+        KeyModifier::Alt => config.alt_format.clone(),
+        KeyModifier::Shift => config.shift_format.clone(),
+        KeyModifier::Super => config.super_format.clone(),
+    }
+}
+
+fn format_modifier_string(modifiers: &[KeyModifier], config: &ModifierFormatConfig) -> String {
     if modifiers.is_empty() {
         String::new()
     } else {
         modifiers
             .iter()
-            .map(|m| m.to_string())
+            .map(|m| format_modifier(m, config))
+            .filter(|s| !s.is_empty()) // Skip empty modifiers (e.g., in stripped preset)
             .collect::<Vec<_>>()
-            .join("-")
+            .join(&config.modifier_separator)
     }
 }
 
@@ -641,17 +819,22 @@ fn get_key_separator(key_display: &[String]) -> &'static str {
 
 /// Substitute placeholders in a format template
 /// Supports: {mods}, {keys}, {combo}
-/// {combo} is {mods} + {keys} when both are present, otherwise just {keys}
+/// {combo} uses the modifier_format_config.format_order and key_separator
 fn substitute_format_template(
     template: &str,
     modifier_str: &str,
     key_display: &[String],
     key_separator: &str,
+    modifier_config: &ModifierFormatConfig,
 ) -> String {
     let keys_str = key_display.join(key_separator);
 
+    // Build combo string using the format_order template
     let combo_str = if !modifier_str.is_empty() && !keys_str.is_empty() {
-        format!("{} + {}", modifier_str, keys_str)
+        modifier_config.format_order
+            .replace("{mods}", modifier_str)
+            .replace("{sep}", &modifier_config.key_separator)
+            .replace("{key}", &keys_str)
     } else if !modifier_str.is_empty() {
         modifier_str.to_string()
     } else {
@@ -670,6 +853,7 @@ fn style_key_with_modifier(
     palette: &Styling,
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
+    modifier_format_config: &ModifierFormatConfig,
     mode: Option<&str>,
     label: &str,
     strip_modifier: Option<&[KeyModifier]>,
@@ -702,13 +886,13 @@ fn style_key_with_modifier(
         common_modifiers.clone()
     };
 
-    let modifier_str = format_modifier_string(&display_modifiers);
+    let modifier_str = format_modifier_string(&display_modifiers, modifier_format_config);
     let key_display = format_key_display(key_bindings, &common_modifiers);
     let key_separator = get_key_separator(&key_display);
 
     // Get the format template for this label
     let template = get_format_for_label(label_format_config, mode, label);
-    let formatted_combo = substitute_format_template(&template, &modifier_str, &key_display, key_separator);
+    let formatted_combo = substitute_format_template(&template, &modifier_str, &key_display, key_separator, modifier_format_config);
 
     styled_parts.push(Style::new().paint(" "));
 
@@ -779,6 +963,7 @@ fn add_hint(
     colors: &Styling,
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
+    modifier_format_config: &ModifierFormatConfig,
     label_text_overrides: &HashMap<String, String>,
     mode: Option<&str>,
     strip_modifier: Option<&[KeyModifier]>,
@@ -786,7 +971,7 @@ fn add_hint(
     if !keys.is_empty() {
         // Apply label text override if available (with mode-specific lookup)
         let display_label = get_label_text(label_text_overrides, mode, description);
-        let styled_keys = style_key_with_modifier(keys, colors, color_config, label_format_config, mode, description, strip_modifier);
+        let styled_keys = style_key_with_modifier(keys, colors, color_config, label_format_config, modifier_format_config, mode, description, strip_modifier);
         parts.extend(styled_keys);
         let styled_desc = style_description(&display_label, colors, color_config, mode, description);
         parts.extend(styled_desc);
@@ -848,6 +1033,7 @@ fn render_hints_for_mode(
     colors: &Styling,
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
+    modifier_format_config: &ModifierFormatConfig,
     label_text_overrides: &HashMap<String, String>,
 ) -> Vec<ANSIString<'static>> {
     let mut parts = vec![];
@@ -1145,7 +1331,7 @@ fn render_hints_for_mode(
 
     // Render the common modifier badge if present
     if !common_modifiers.is_empty() {
-        let modifier_str = format_modifier_string(&common_modifiers);
+        let modifier_str = format_modifier_string(&common_modifiers, modifier_format_config);
         let colors_for_mods = get_colors_for_label(color_config, mode_str, "");
 
         // Use custom colors if configured, otherwise fall back to palette
@@ -1154,12 +1340,15 @@ fn render_hints_for_mode(
         let key_fg = colors_for_mods.key_fg
             .unwrap_or_else(|| palette_match!(colors.ribbon_unselected.base));
 
-        parts.push(Style::new()
-            .fg(key_fg)
-            .on(key_bg)
-            .bold()
-            .paint(format!(" {} ", modifier_str)));
-        parts.push(Style::new().paint(" "));
+        // Only render the badge if modifier_str is not empty (e.g., not in stripped mode)
+        if !modifier_str.is_empty() {
+            parts.push(Style::new()
+                .fg(key_fg)
+                .on(key_bg)
+                .bold()
+                .paint(format!(" {} ", modifier_str)));
+            parts.push(Style::new().paint(" "));
+        }
     }
 
     // Render each hint with modifiers stripped from common ones
@@ -1171,6 +1360,7 @@ fn render_hints_for_mode(
             colors,
             color_config,
             label_format_config,
+            modifier_format_config,
             label_text_overrides,
             mode_str,
             if common_modifiers.is_empty() {
@@ -1205,35 +1395,40 @@ mod tests {
     #[test]
     fn test_substitute_format_template_with_combo_only() {
         let keys = vec!["a".to_string(), "b".to_string()];
-        let result = substitute_format_template("{combo}", "Ctrl", &keys, "|");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{combo}", "Ctrl", &keys, "|", &config);
         assert_eq!(result, "Ctrl + a|b");
     }
 
     #[test]
     fn test_substitute_format_template_with_no_modifiers() {
         let keys = vec!["Enter".to_string()];
-        let result = substitute_format_template("{combo}", "", &keys, "");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{combo}", "", &keys, "", &config);
         assert_eq!(result, "Enter");
     }
 
     #[test]
     fn test_substitute_format_template_with_only_modifiers() {
         let keys: Vec<String> = vec![];
-        let result = substitute_format_template("{combo}", "Ctrl", &keys, "");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{combo}", "Ctrl", &keys, "", &config);
         assert_eq!(result, "Ctrl");
     }
 
     #[test]
     fn test_substitute_format_template_with_mods_and_keys_separate() {
         let keys = vec!["a".to_string()];
-        let result = substitute_format_template("{mods} {keys}", "Ctrl", &keys, "");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{mods} {keys}", "Ctrl", &keys, "", &config);
         assert_eq!(result, "Ctrl a");
     }
 
     #[test]
     fn test_substitute_format_template_with_custom_separator() {
         let keys = vec!["a".to_string(), "b".to_string()];
-        let result = substitute_format_template("{mods} → {keys}", "Ctrl", &keys, "|");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{mods} → {keys}", "Ctrl", &keys, "|", &config);
         assert_eq!(result, "Ctrl → a|b");
     }
 
@@ -1298,5 +1493,150 @@ mod tests {
 
         let result = get_format_for_label(&config, Some("pane"), "unknown");
         assert_eq!(result, "{combo}");
+    }
+
+    // Tests for modifier format configuration
+
+    #[test]
+    fn test_modifier_preset_full() {
+        let config = ModifierFormatConfig::from_preset(ModifierPreset::Full);
+        assert_eq!(config.ctrl_format, "Ctrl");
+        assert_eq!(config.alt_format, "Alt");
+        assert_eq!(config.shift_format, "Shift");
+        assert_eq!(config.super_format, "Super");
+        assert_eq!(config.modifier_separator, "-");
+        assert_eq!(config.key_separator, " + ");
+    }
+
+    #[test]
+    fn test_modifier_preset_brief() {
+        let config = ModifierFormatConfig::from_preset(ModifierPreset::Brief);
+        assert_eq!(config.ctrl_format, "C");
+        assert_eq!(config.alt_format, "A");
+        assert_eq!(config.shift_format, "S");
+        assert_eq!(config.super_format, "M");
+        assert_eq!(config.modifier_separator, "-");
+        assert_eq!(config.key_separator, "-");
+    }
+
+    #[test]
+    fn test_modifier_preset_stripped() {
+        let config = ModifierFormatConfig::from_preset(ModifierPreset::Stripped);
+        assert_eq!(config.ctrl_format, "");
+        assert_eq!(config.alt_format, "");
+        assert_eq!(config.shift_format, "");
+        assert_eq!(config.super_format, "");
+        assert_eq!(config.modifier_separator, "");
+        assert_eq!(config.key_separator, "");
+        assert_eq!(config.format_order, "{key}");
+    }
+
+    #[test]
+    fn test_format_modifier_string_full() {
+        let config = ModifierFormatConfig::from_preset(ModifierPreset::Full);
+        let modifiers = vec![KeyModifier::Ctrl, KeyModifier::Shift];
+        let result = format_modifier_string(&modifiers, &config);
+        assert_eq!(result, "Ctrl-Shift");
+    }
+
+    #[test]
+    fn test_format_modifier_string_brief() {
+        let config = ModifierFormatConfig::from_preset(ModifierPreset::Brief);
+        let modifiers = vec![KeyModifier::Ctrl, KeyModifier::Shift];
+        let result = format_modifier_string(&modifiers, &config);
+        assert_eq!(result, "C-S");
+    }
+
+    #[test]
+    fn test_format_modifier_string_stripped() {
+        let config = ModifierFormatConfig::from_preset(ModifierPreset::Stripped);
+        let modifiers = vec![KeyModifier::Ctrl, KeyModifier::Shift];
+        let result = format_modifier_string(&modifiers, &config);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_format_modifier_string_custom() {
+        let config = ModifierFormatConfig {
+            preset: None,
+            ctrl_format: "^".to_string(),
+            alt_format: "M".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "⌘".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "".to_string(),
+            format_order: "{mods}{key}".to_string(),
+        };
+        let modifiers = vec![KeyModifier::Ctrl];
+        let result = format_modifier_string(&modifiers, &config);
+        assert_eq!(result, "^");
+    }
+
+    #[test]
+    fn test_parse_modifier_preset() {
+        assert_eq!(parse_modifier_preset("full"), Some(ModifierPreset::Full));
+        assert_eq!(parse_modifier_preset("Full"), Some(ModifierPreset::Full));
+        assert_eq!(parse_modifier_preset("FULL"), Some(ModifierPreset::Full));
+        assert_eq!(parse_modifier_preset("brief"), Some(ModifierPreset::Brief));
+        assert_eq!(parse_modifier_preset("stripped"), Some(ModifierPreset::Stripped));
+        assert_eq!(parse_modifier_preset("invalid"), None);
+    }
+
+    #[test]
+    fn test_parse_modifier_format_config_with_preset() {
+        let mut config = BTreeMap::new();
+        config.insert("modifier_preset".to_string(), "brief".to_string());
+
+        let result = parse_modifier_format_config(&config);
+        assert_eq!(result.ctrl_format, "C");
+        assert_eq!(result.key_separator, "-");
+    }
+
+    #[test]
+    fn test_parse_modifier_format_config_with_custom() {
+        let mut config = BTreeMap::new();
+        config.insert("modifier_ctrl_format".to_string(), "^".to_string());
+        config.insert("modifier_key_separator".to_string(), "".to_string());
+
+        let result = parse_modifier_format_config(&config);
+        assert_eq!(result.ctrl_format, "^");
+        assert_eq!(result.key_separator, "");
+        // Other values should use defaults
+        assert_eq!(result.alt_format, "Alt");
+        assert!(result.preset.is_none());
+    }
+
+    #[test]
+    fn test_substitute_format_template_with_custom_format_order() {
+        let keys = vec!["q".to_string()];
+        let config = ModifierFormatConfig {
+            preset: None,
+            ctrl_format: "^".to_string(),
+            alt_format: "A".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "M".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "".to_string(),
+            format_order: "{mods}{sep}{key}".to_string(),
+        };
+        let result = substitute_format_template("{combo}", "^", &keys, "", &config);
+        assert_eq!(result, "^q");
+    }
+
+    #[test]
+    fn test_substitute_format_template_with_reversed_order() {
+        let keys = vec!["q".to_string()];
+        let config = ModifierFormatConfig {
+            preset: None,
+            ctrl_format: "^".to_string(),
+            alt_format: "A".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "M".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "".to_string(),
+            format_order: "{key}{sep}{mods}".to_string(),
+        };
+        let result = substitute_format_template("{combo}", "^", &keys, "", &config);
+        assert_eq!(result, "q^");
     }
 }

@@ -222,6 +222,87 @@ Format priority (highest to lowest):
 
 **Note:** Template placeholders must include at least one of `{keys}` or `{combo}` to be valid. Invalid templates are ignored and the default is used instead.
 
+### Modifier Format Configuration
+
+Customize how modifier keys (Ctrl, Alt, Shift, Super) are displayed.
+
+#### Presets
+
+Use `modifier_preset` to quickly apply a predefined format:
+
+- `full` (default): Full modifier names - "Ctrl + q", "Ctrl-Alt + x"
+- `brief`: Short modifier names - "C-q", "C-A-x"
+- `stripped`: No modifiers shown - just the key "q", "x"
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Use brief modifier format
+        modifier_preset "brief"  // Results in "C-q" instead of "Ctrl + q"
+    }
+}
+```
+
+#### Custom Format Options
+
+For more control, use individual format options. These are **mutually exclusive** with presets - if any custom option is specified, the preset is ignored.
+
+| Option | Description | Default (Full) |
+|--------|-------------|----------------|
+| `modifier_ctrl_format` | Format for Ctrl modifier | "Ctrl" |
+| `modifier_alt_format` | Format for Alt modifier | "Alt" |
+| `modifier_shift_format` | Format for Shift modifier | "Shift" |
+| `modifier_super_format` | Format for Super modifier | "Super" |
+| `modifier_separator` | Separator between modifiers | "-" |
+| `modifier_key_separator` | Separator between modifiers and key | " + " |
+| `modifier_format_order` | Display order template | "{mods}{sep}{key}" |
+
+##### Format Order Template
+
+The `modifier_format_order` option controls how modifiers and keys are combined:
+- `{mods}`: The formatted modifier string (e.g., "Ctrl", "C-S")
+- `{sep}`: The `modifier_key_separator` value
+- `{key}`: The key(s) being bound
+
+#### Examples
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Caret-style: ^q, ^x
+        modifier_ctrl_format "^"
+        modifier_alt_format "M"
+        modifier_shift_format "S"
+        modifier_super_format "⌘"
+        modifier_separator ""
+        modifier_key_separator ""
+        modifier_format_order "{mods}{key}"
+    }
+}
+```
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Key-first format: q^, x^
+        modifier_ctrl_format "^"
+        modifier_key_separator ""
+        modifier_format_order "{key}{mods}"
+    }
+}
+```
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Bracketed format: [C]q
+        modifier_ctrl_format "[C]"
+        modifier_key_separator ""
+        modifier_format_order "{mods}{key}"
+    }
+}
+```
+
 ## TODO
 
 - [x] configurable colors/formatting
