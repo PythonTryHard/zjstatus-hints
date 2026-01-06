@@ -22,6 +22,8 @@ struct State {
     color_config: ColorConfig,
     // Custom label format configuration
     label_format_config: LabelFormatConfig,
+    // Custom label text mode defaults
+    label_text_mode_defaults: HashMap<String, String>,
     // Custom label text overrides
     label_text_overrides: HashMap<String, String>,
     // Custom modifier format configuration
@@ -60,40 +62,89 @@ fn parse_hex_color(s: &str) -> Option<ansi_term::Colour> {
 
 /// Parse per-label text overrides from configuration
 ///
-/// Format: "label_text" for label text replacements
-/// Example: "pane_label_text" = "p" replaces "pane" with "p"
+/// Supports three formats:
+/// - Label-only: "pane_label_text" = "p" replaces "pane" with "p" in all modes
+/// - Mode-global: "pane.label_text" = "p" sets default text for all labels in pane mode
+/// - Mode+label specific: "pane.new_label_text" = "n" replaces "new" with "n" only in pane mode
 ///
 /// For labels with spaces, use underscores: "split_right_label_text"
-fn parse_label_text_overrides(config: &BTreeMap<String, String>) -> HashMap<String, String> {
+///
+/// Returns (mode_defaults, label_overrides)
+fn parse_label_text_overrides(config: &BTreeMap<String, String>) -> (HashMap<String, String>, HashMap<String, String>) {
+    let mut mode_defaults = HashMap::new();
     let mut overrides = HashMap::new();
-    const LABEL_TEXT_SUFFIX: &str = "_label_text";
+    const TEXT_PATTERN: &str = "label_text";
 
     for (key, value) in config.iter() {
-        if key.ends_with(LABEL_TEXT_SUFFIX) {
-            let label_name = key.trim_end_matches(LABEL_TEXT_SUFFIX);
+        if key.ends_with(TEXT_PATTERN) {
+            // Check if there's a separator before the pattern
+            let prefix_len = key.len() - TEXT_PATTERN.len();
+            if prefix_len == 0 || value.trim().is_empty() {
+                // Global config like "label_text" or empty value
+                continue;
+            }
+            
+            let separator = &key[prefix_len - 1..prefix_len];
+            if separator != "_" && separator != "." {
+                continue;
+            }
+            
+            let label_name = &key[..prefix_len - 1];
             if label_name.is_empty() {
                 continue;
             }
 
-            // Convert underscores to spaces for multi-word labels
-            let label_key = label_name.replace('_', " ");
+            // Check separator to determine if this is mode-specific
+            if separator == "." {
+                // Mode-specific: separator is dot
+                // Format: {mode}.{property/label}_{pattern}
+                
+                if let Some(dot_pos) = label_name.rfind('.') {
+                    // Has another dot: "pane.new" -> mode="pane", label="new"
+                    let mode = &label_name[..dot_pos];
+                    let label = &label_name[dot_pos + 1..];
+                    if mode.is_empty() || label.is_empty() {
+                        continue;
+                    }
+                    
+                    // Mode+label specific
+                    let label_key = format!("{}.{}", mode, label.replace('_', " "));
+                    overrides.insert(label_key, value.clone());
+                } else {
+                    // No other dot: "pane" from "pane.label_text" -> mode-global
+                    mode_defaults.insert(label_name.to_string(), value.clone());
+                }
+            } else {
+                // Label-only: separator is underscore
+                let label_key = label_name.replace('_', " ");
+                
+                // Skip whitespace-only labels
+                if label_key.trim().is_empty() {
+                    continue;
+                }
 
-            if !label_key.trim().is_empty() && !value.trim().is_empty() {
                 overrides.insert(label_key, value.clone());
             }
         }
     }
-    overrides
+    (mode_defaults, overrides)
 }
 
 /// Get the display label text, with mode-specific and label-only override support
-/// Priority: mode-specific (e.g., "pane.new") > label-only (e.g., "new") > default
-fn get_label_text(overrides: &HashMap<String, String>, mode: Option<&str>, label: &str) -> String {
-    // Try mode-specific override first (e.g., "pane.new")
+/// Priority: mode+label specific (e.g., "pane.new") > mode-global (e.g., "pane") > label-only (e.g., "new") > default
+fn get_label_text(overrides: &HashMap<String, String>, mode_defaults: &HashMap<String, String>, mode: Option<&str>, label: &str) -> String {
+    // Try mode+label specific override first (e.g., "pane.new")
     if let Some(m) = mode {
         let mode_specific_key = format!("{}.{}", m, label);
         if let Some(override_text) = overrides.get(&mode_specific_key) {
             return override_text.clone();
+        }
+    }
+
+    // Try mode-global defaults (e.g., "pane")
+    if let Some(m) = mode {
+        if let Some(mode_text) = mode_defaults.get(m) {
+            return mode_text.clone();
         }
     }
 
@@ -106,58 +157,100 @@ fn get_label_text(overrides: &HashMap<String, String>, mode: Option<&str>, label
 
 /// Parse per-label color overrides from configuration
 ///
-/// Supports two formats:
+/// Supports three formats:
 /// - Label-only: "select_key_bg" -> applies to "select" label in all modes
-/// - Mode-specific: "pane.select_key_bg" -> applies to "select" label only in pane mode
+/// - Mode-global: "pane.key_bg" -> applies to all labels in pane mode  
+/// - Mode+label specific: "pane.select_key_bg" -> applies to "select" label only in pane mode
 ///
 /// For labels with spaces (e.g., "split right"), use underscores: "split_right_key_bg"
 /// Mode-specific keys use dots to separate mode from label: "pane.split_right_key_bg"
-fn parse_label_overrides(config: &BTreeMap<String, String>) -> HashMap<String, LabelColors> {
+///
+/// Returns (mode_defaults, label_overrides)
+fn parse_label_overrides(config: &BTreeMap<String, String>) -> (HashMap<String, LabelColors>, HashMap<String, LabelColors>) {
+    let mut mode_defaults = HashMap::new();
     let mut overrides = HashMap::new();
-    let color_suffixes = ["_key_fg", "_key_bg", "_label_fg", "_label_bg"];
+    let color_patterns = [("key_fg", 0), ("key_bg", 1), ("label_fg", 2), ("label_bg", 3)];
 
     for (key, value) in config.iter() {
-        for suffix in &color_suffixes {
-            if key.ends_with(suffix) {
-                let label_name = key.trim_end_matches(suffix);
-                if label_name.is_empty() || label_name == "key" || label_name == "label" {
+        for (pattern, field_idx) in &color_patterns {
+            if key.ends_with(pattern) {
+                // Check if there's a separator before the pattern
+                let prefix_len = key.len() - pattern.len();
+                if prefix_len == 0 {
+                    // Global config like "key_fg"
+                    continue;
+                }
+                
+                let separator = &key[prefix_len - 1..prefix_len];
+                if separator != "_" && separator != "." {
+                    continue;
+                }
+                
+                let label_name = &key[..prefix_len - 1];
+                if label_name.is_empty() {
                     continue;
                 }
 
-                // Check if this is a mode-specific key (contains a dot)
-                let label_key = if let Some(dot_pos) = label_name.find('.') {
-                    // Mode-specific: "pane.select" or "pane.split_right" -> "pane.select" or "pane.split right"
-                    let mode = &label_name[..dot_pos];
-                    let label = &label_name[dot_pos + 1..];
-                    if mode.is_empty() || label.is_empty() {
-                        continue;
-                    }
-                    format!("{}.{}", mode, label.replace('_', " "))
-                } else {
-                    // Label-only: "select" or "split_right" -> "select" or "split right"
-                    label_name.replace('_', " ")
-                };
-
-                // Skip whitespace-only labels (e.g., "__key_bg" -> "  ")
-                if label_key.trim().is_empty() || label_key.trim() == "." {
-                    continue;
-                }
                 // Only insert entry if color parses successfully
                 if let Some(color) = parse_hex_color(value) {
-                    let entry = overrides.entry(label_key).or_insert_with(LabelColors::default);
-                    match *suffix {
-                        "_key_fg" => entry.key_fg = Some(color),
-                        "_key_bg" => entry.key_bg = Some(color),
-                        "_label_fg" => entry.label_fg = Some(color),
-                        "_label_bg" => entry.label_bg = Some(color),
-                        _ => {}
+                    // Check separator to determine if this is mode-specific
+                    if separator == "." {
+                        // Mode-specific: separator is dot
+                        // Format: {mode}.{property/label}_{pattern}
+                        
+                        if let Some(dot_pos) = label_name.rfind('.') {
+                            // Has another dot: "pane.select" -> mode="pane", label="select"
+                            let mode = &label_name[..dot_pos];
+                            let label = &label_name[dot_pos + 1..];
+                            if mode.is_empty() || label.is_empty() {
+                                continue;
+                            }
+                            
+                            // Mode+label specific
+                            let label_key = format!("{}.{}", mode, label.replace('_', " "));
+                            let entry = overrides.entry(label_key).or_insert_with(LabelColors::default);
+                            match field_idx {
+                                0 => entry.key_fg = Some(color),
+                                1 => entry.key_bg = Some(color),
+                                2 => entry.label_fg = Some(color),
+                                3 => entry.label_bg = Some(color),
+                                _ => {}
+                            }
+                        } else {
+                            // No other dot: "pane" from "pane.key_fg" -> mode-global
+                            let entry = mode_defaults.entry(label_name.to_string()).or_insert_with(LabelColors::default);
+                            match field_idx {
+                                0 => entry.key_fg = Some(color),
+                                1 => entry.key_bg = Some(color),
+                                2 => entry.label_fg = Some(color),
+                                3 => entry.label_bg = Some(color),
+                                _ => {}
+                            }
+                        }
+                    } else {
+                        // Label-only: separator is underscore
+                        let label_key = label_name.replace('_', " ");
+                        
+                        // Skip whitespace-only labels
+                        if label_key.trim().is_empty() {
+                            continue;
+                        }
+                        
+                        let entry = overrides.entry(label_key).or_insert_with(LabelColors::default);
+                        match field_idx {
+                            0 => entry.key_fg = Some(color),
+                            1 => entry.key_bg = Some(color),
+                            2 => entry.label_fg = Some(color),
+                            3 => entry.label_bg = Some(color),
+                            _ => {}
+                        }
                     }
                 }
                 break;
             }
         }
     }
-    overrides
+    (mode_defaults, overrides)
 }
 
 /// Per-label color configuration
@@ -173,6 +266,7 @@ struct LabelColors {
 #[derive(Default, Clone)]
 struct ColorConfig {
     defaults: LabelColors,
+    mode_defaults: HashMap<String, LabelColors>,
     overrides: HashMap<String, LabelColors>,
 }
 
@@ -194,6 +288,7 @@ impl Default for LabelFormat {
 #[derive(Default, Clone)]
 struct LabelFormatConfig {
     defaults: LabelFormat,
+    mode_defaults: HashMap<String, LabelFormat>,
     overrides: HashMap<String, LabelFormat>,
 }
 
@@ -278,60 +373,105 @@ fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFo
 
 /// Parse per-label format overrides from configuration
 ///
-/// Supports two formats:
+/// Supports three formats:
 /// - Label-only: "select_key_format" -> applies to "select" label in all modes
-/// - Mode-specific: "pane.select_key_format" -> applies to "select" label only in pane mode
+/// - Mode-global: "pane.key_format" -> applies to all labels in pane mode
+/// - Mode+label specific: "pane.select_key_format" -> applies to "select" label only in pane mode
 ///
 /// For labels with spaces (e.g., "split right"), use underscores: "split_right_key_format"
 /// Mode-specific keys use dots to separate mode from label: "pane.split_right_key_format"
-fn parse_label_format_overrides(config: &BTreeMap<String, String>) -> HashMap<String, LabelFormat> {
+///
+/// Returns (mode_defaults, label_overrides)
+fn parse_label_format_overrides(config: &BTreeMap<String, String>) -> (HashMap<String, LabelFormat>, HashMap<String, LabelFormat>) {
+    let mut mode_defaults = HashMap::new();
     let mut overrides = HashMap::new();
-    const FORMAT_SUFFIX: &str = "_key_format";
+    const FORMAT_PATTERN: &str = "key_format";
 
     for (key, value) in config.iter() {
-        if key.ends_with(FORMAT_SUFFIX) {
-            let label_name = key.trim_end_matches(FORMAT_SUFFIX);
-            if label_name.is_empty() || label_name == "key" {
+        if key.ends_with(FORMAT_PATTERN) {
+            // Check if there's a separator before the pattern
+            let prefix_len = key.len() - FORMAT_PATTERN.len();
+            if prefix_len == 0 {
+                // Global config like "key_format"
                 continue;
             }
-
-            // Check if this is a mode-specific key (contains a dot)
-            let label_key = if let Some(dot_pos) = label_name.find('.') {
-                // Mode-specific: "pane.select" or "pane.split_right" -> "pane.select" or "pane.split right"
-                let mode = &label_name[..dot_pos];
-                let label = &label_name[dot_pos + 1..];
-                if mode.is_empty() || label.is_empty() {
-                    continue;
-                }
-                format!("{}.{}", mode, label.replace('_', " "))
-            } else {
-                // Label-only: "select" or "split_right" -> "select" or "split right"
-                label_name.replace('_', " ")
-            };
-
-            // Skip whitespace-only labels
-            if label_key.trim().is_empty() || label_key.trim() == "." {
+            
+            let separator = &key[prefix_len - 1..prefix_len];
+            if separator != "_" && separator != "." {
+                continue;
+            }
+            
+            let label_name = &key[..prefix_len - 1];
+            if label_name.is_empty() {
                 continue;
             }
 
             // Validate template contains at least one of the required placeholders
-            if value.contains("{keys}") || value.contains("{combo}") {
+            if !value.contains("{keys}") && !value.contains("{combo}") {
+                continue;
+            }
+
+            // Check separator to determine if this is mode-specific
+            if separator == "." {
+                // Mode-specific: separator is dot
+                // Format: {mode}.{property/label}_{pattern}
+                // e.g., "pane.key_format" or "pane.select_key_format"
+                
+                // label_name is now "pane" or "pane.select" (if there are nested dots)
+                // We need to split on the LAST dot to separate mode from label
+                if let Some(dot_pos) = label_name.rfind('.') {
+                    // Has another dot: "pane.select" -> mode="pane", label="select"
+                    let mode = &label_name[..dot_pos];
+                    let label = &label_name[dot_pos + 1..];
+                    if mode.is_empty() || label.is_empty() {
+                        continue;
+                    }
+                    
+                    // Mode+label specific
+                    let label_key = format!("{}.{}", mode, label.replace('_', " "));
+                    overrides.insert(label_key, LabelFormat {
+                        template: value.clone(),
+                    });
+                } else {
+                    // No other dot: "pane" from "pane.key_format" -> mode-global
+                    // This means the original key was "{mode}.{property}_{pattern}"
+                    mode_defaults.insert(label_name.to_string(), LabelFormat {
+                        template: value.clone(),
+                    });
+                }
+            } else {
+                // Label-only: separator is underscore
+                // Format: {label}_{pattern}
+                let label_key = label_name.replace('_', " ");
+                
+                // Skip whitespace-only labels
+                if label_key.trim().is_empty() {
+                    continue;
+                }
+
                 overrides.insert(label_key, LabelFormat {
                     template: value.clone(),
                 });
             }
         }
     }
-    overrides
+    (mode_defaults, overrides)
 }
 
 /// Get effective label format for a specific label, with mode-specific override support.
-/// Lookup order: "{mode}.{label}" -> "{label}" -> defaults
+/// Lookup order: "{mode}.{label}" -> "{mode}" -> "{label}" -> defaults
 fn get_format_for_label(config: &LabelFormatConfig, mode: Option<&str>, label: &str) -> String {
-    // Try mode-specific override first (e.g., "pane.new")
+    // Try mode+label specific override first (e.g., "pane.new")
     if let Some(m) = mode {
         let key = format!("{}.{}", m, label);
         if let Some(format) = config.overrides.get(&key) {
+            return format.template.clone();
+        }
+    }
+
+    // Try mode-global defaults (e.g., "pane")
+    if let Some(m) = mode {
+        if let Some(format) = config.mode_defaults.get(m) {
             return format.template.clone();
         }
     }
@@ -346,32 +486,39 @@ fn get_format_for_label(config: &LabelFormatConfig, mode: Option<&str>, label: &
 }
 
 /// Get effective colors for a specific label, with mode-specific override support.
-/// Lookup order for each field: "{mode}.{label}" -> "{label}" -> defaults
-/// Fields are merged independently, so mode-specific can override key_bg while
+/// Lookup order for each field: "{mode}.{label}" -> "{mode}" -> "{label}" -> defaults
+/// Fields are merged independently, so mode+label can override key_bg while
 /// label-only provides label_fg.
 fn get_colors_for_label(config: &ColorConfig, mode: Option<&str>, label: &str) -> LabelColors {
-    // Try mode-specific override first (e.g., "pane.new")
-    let mode_specific = mode.and_then(|m| {
+    // Try mode+label specific override first (e.g., "pane.new")
+    let mode_label_specific = mode.and_then(|m| {
         let key = format!("{}.{}", m, label);
         config.overrides.get(&key)
     });
 
+    // Try mode-global defaults (e.g., "pane")
+    let mode_global = mode.and_then(|m| config.mode_defaults.get(m));
+
     // Fall back to label-only override (e.g., "new")
     let label_only = config.overrides.get(label);
 
-    // Merge all three levels: mode-specific -> label-only -> defaults
+    // Merge all four levels: mode+label -> mode-global -> label-only -> defaults
     // Each field falls through independently
     LabelColors {
-        key_fg: mode_specific.and_then(|o| o.key_fg)
+        key_fg: mode_label_specific.and_then(|o| o.key_fg)
+            .or(mode_global.and_then(|o| o.key_fg))
             .or(label_only.and_then(|o| o.key_fg))
             .or(config.defaults.key_fg),
-        key_bg: mode_specific.and_then(|o| o.key_bg)
+        key_bg: mode_label_specific.and_then(|o| o.key_bg)
+            .or(mode_global.and_then(|o| o.key_bg))
             .or(label_only.and_then(|o| o.key_bg))
             .or(config.defaults.key_bg),
-        label_fg: mode_specific.and_then(|o| o.label_fg)
+        label_fg: mode_label_specific.and_then(|o| o.label_fg)
+            .or(mode_global.and_then(|o| o.label_fg))
             .or(label_only.and_then(|o| o.label_fg))
             .or(config.defaults.label_fg),
-        label_bg: mode_specific.and_then(|o| o.label_bg)
+        label_bg: mode_label_specific.and_then(|o| o.label_bg)
+            .or(mode_global.and_then(|o| o.label_bg))
             .or(label_only.and_then(|o| o.label_bg))
             .or(config.defaults.label_bg),
     }
@@ -460,6 +607,7 @@ impl ZellijPlugin for State {
             .unwrap_or(false);
 
         // Parse custom color configuration
+        let (mode_defaults, overrides) = parse_label_overrides(&configuration);
         self.color_config = ColorConfig {
             defaults: LabelColors {
                 key_fg: configuration.get("key_fg").and_then(|s| parse_hex_color(s)),
@@ -467,7 +615,8 @@ impl ZellijPlugin for State {
                 label_fg: configuration.get("label_fg").and_then(|s| parse_hex_color(s)),
                 label_bg: configuration.get("label_bg").and_then(|s| parse_hex_color(s)),
             },
-            overrides: parse_label_overrides(&configuration),
+            mode_defaults,
+            overrides,
         };
 
         // Parse custom label format configuration
@@ -483,15 +632,19 @@ impl ZellijPlugin for State {
             "{combo}".to_string()
         };
 
+        let (mode_format_defaults, format_overrides) = parse_label_format_overrides(&configuration);
         self.label_format_config = LabelFormatConfig {
             defaults: LabelFormat {
                 template: validated_format,
             },
-            overrides: parse_label_format_overrides(&configuration),
+            mode_defaults: mode_format_defaults,
+            overrides: format_overrides,
         };
 
         // Parse custom label text overrides
-        self.label_text_overrides = parse_label_text_overrides(&configuration);
+        let (label_text_mode_defaults, label_text_overrides) = parse_label_text_overrides(&configuration);
+        self.label_text_mode_defaults = label_text_mode_defaults;
+        self.label_text_overrides = label_text_overrides;
 
         // Parse custom modifier format configuration
         self.modifier_format_config = parse_modifier_format_config(&configuration);
@@ -521,7 +674,7 @@ impl ZellijPlugin for State {
         let mode_info = &self.mode_info;
         let output = if !(self.hide_in_base_mode && Some(mode_info.mode) == mode_info.base_mode) {
             let keymap = get_keymap_for_mode(mode_info);
-            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config, &self.modifier_format_config, &self.label_text_overrides);
+            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config, &self.modifier_format_config, &self.label_text_mode_defaults, &self.label_text_overrides);
 
             let ansi_strings = ANSIStrings(&parts);
             let formatted = format!(" {}", ansi_strings);
@@ -904,13 +1057,14 @@ fn add_hint(
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
     modifier_format_config: &ModifierFormatConfig,
+    label_text_mode_defaults: &HashMap<String, String>,
     label_text_overrides: &HashMap<String, String>,
     mode: Option<&str>,
     strip_modifier: Option<&[KeyModifier]>,
 ) {
     if !keys.is_empty() {
         // Apply label text override if available (with mode-specific lookup)
-        let display_label = get_label_text(label_text_overrides, mode, description);
+        let display_label = get_label_text(label_text_overrides, label_text_mode_defaults, mode, description);
         let styled_keys = style_key_with_modifier(keys, colors, color_config, label_format_config, modifier_format_config, mode, description, strip_modifier);
         parts.extend(styled_keys);
         let styled_desc = style_description(&display_label, colors, color_config, mode, description);
@@ -940,6 +1094,7 @@ fn render_hints_for_mode(
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
     modifier_format_config: &ModifierFormatConfig,
+    label_text_mode_defaults: &HashMap<String, String>,
     label_text_overrides: &HashMap<String, String>,
 ) -> Vec<ANSIString<'static>> {
     let mut parts = vec![];
@@ -1233,6 +1388,7 @@ fn render_hints_for_mode(
             color_config,
             label_format_config,
             modifier_format_config,
+            label_text_mode_defaults,
             label_text_overrides,
             mode_str,
             None,
@@ -1307,7 +1463,7 @@ mod tests {
         config.insert("pane.move_key_format".to_string(), "{mods} + {keys}".to_string());
         config.insert("invalid_key_format".to_string(), "no_placeholder".to_string());
 
-        let overrides = parse_label_format_overrides(&config);
+        let (mode_defaults, overrides) = parse_label_format_overrides(&config);
 
         assert_eq!(overrides.get("select").map(|f| f.template.as_str()), Some("{combo}"));
         assert_eq!(
@@ -1316,6 +1472,8 @@ mod tests {
         );
         // Invalid templates (missing placeholders) should not be inserted
         assert!(overrides.get("invalid").is_none());
+        // Mode defaults should be empty since no mode-global configs were added
+        assert!(mode_defaults.is_empty());
     }
 
     #[test]
@@ -1327,6 +1485,7 @@ mod tests {
 
         let config = LabelFormatConfig {
             defaults: LabelFormat::default(),
+            mode_defaults: HashMap::new(),
             overrides,
         };
 
@@ -1343,6 +1502,7 @@ mod tests {
 
         let config = LabelFormatConfig {
             defaults: LabelFormat::default(),
+            mode_defaults: HashMap::new(),
             overrides,
         };
 
@@ -1356,11 +1516,61 @@ mod tests {
             defaults: LabelFormat {
                 template: "{combo}".to_string(),
             },
+            mode_defaults: HashMap::new(),
             overrides: HashMap::new(),
         };
 
         let result = get_format_for_label(&config, Some("pane"), "unknown");
         assert_eq!(result, "{combo}");
+    }
+
+    #[test]
+    fn test_parse_label_format_overrides_with_mode_global() {
+        let mut config = BTreeMap::new();
+        config.insert("pane.key_format".to_string(), "{mods} + {keys}".to_string());
+        config.insert("tab.key_format".to_string(), "{combo}".to_string());
+        config.insert("select_key_format".to_string(), "{keys}".to_string());
+
+        let (mode_defaults, overrides) = parse_label_format_overrides(&config);
+
+        // Mode-global configs should be in mode_defaults
+        assert_eq!(mode_defaults.get("pane").map(|f| f.template.as_str()), Some("{mods} + {keys}"));
+        assert_eq!(mode_defaults.get("tab").map(|f| f.template.as_str()), Some("{combo}"));
+        
+        // Label-only config should be in overrides
+        assert_eq!(overrides.get("select").map(|f| f.template.as_str()), Some("{keys}"));
+    }
+
+    #[test]
+    fn test_get_format_for_label_with_mode_global() {
+        let mut mode_defaults = HashMap::new();
+        mode_defaults.insert("pane".to_string(), LabelFormat {
+            template: "{mods} + {keys}".to_string(),
+        });
+
+        let mut overrides = HashMap::new();
+        overrides.insert("select".to_string(), LabelFormat {
+            template: "{keys}".to_string(),
+        });
+
+        let config = LabelFormatConfig {
+            defaults: LabelFormat::default(),
+            mode_defaults,
+            overrides,
+        };
+
+        // Mode+label specific should win
+        // (not present, so fallback to mode-global)
+        let result = get_format_for_label(&config, Some("pane"), "new");
+        assert_eq!(result, "{mods} + {keys}");
+
+        // Label-only should be used when mode-global is not present
+        let result = get_format_for_label(&config, Some("tab"), "select");
+        assert_eq!(result, "{keys}");
+
+        // Mode-global should win over label-only
+        let result = get_format_for_label(&config, Some("pane"), "select");
+        assert_eq!(result, "{mods} + {keys}");
     }
 
     // Tests for modifier format configuration
