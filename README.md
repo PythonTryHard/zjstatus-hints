@@ -255,14 +255,18 @@ For more control, use individual format options. These are **mutually exclusive*
 | `modifier_super_format` | Format for Super modifier | "Super" |
 | `modifier_separator` | Separator between modifiers | "-" |
 | `modifier_key_separator` | Separator between modifiers and key | " + " |
-| `modifier_format_order` | Display order template | "{mods}{sep}{key}" |
+| `modifier_combo_template` | Template for composing the combo string | "{mods}{sep}{key}" |
 
-##### Format Order Template
+##### Combo Template
 
-The `modifier_format_order` option controls how modifiers and keys are combined:
+The `modifier_combo_template` option is a template string for composing modifier+key combinations:
 - `{mods}`: The formatted modifier string (e.g., "Ctrl", "C-S")
 - `{sep}`: The `modifier_key_separator` value
 - `{key}`: The key(s) being bound
+
+You can include arbitrary prefix/suffix characters in the template (e.g., `<{mods}{sep}{key}>` for Vim-style).
+
+**Literal curly braces:** Only the exact placeholders `{mods}`, `{sep}`, and `{key}` are replaced. Other curly braces are preserved as-is. For example, `{{mods}}` produces `{C}` (the outer braces are literal, only the inner `{mods}` is replaced).
 
 #### Examples
 
@@ -276,7 +280,7 @@ plugins {
         modifier_super_format "⌘"
         modifier_separator ""
         modifier_key_separator ""
-        modifier_format_order "{mods}{key}"
+        modifier_combo_template "{mods}{key}"
     }
 }
 ```
@@ -287,7 +291,7 @@ plugins {
         // Key-first format: q^, x^
         modifier_ctrl_format "^"
         modifier_key_separator ""
-        modifier_format_order "{key}{mods}"
+        modifier_combo_template "{key}{mods}"
     }
 }
 ```
@@ -298,7 +302,7 @@ plugins {
         // Bracketed format: [C]q
         modifier_ctrl_format "[C]"
         modifier_key_separator ""
-        modifier_format_order "{mods}{key}"
+        modifier_combo_template "{mods}{key}"
     }
 }
 ```
@@ -313,7 +317,7 @@ plugins {
         modifier_super_format "M"
         modifier_separator "-"
         modifier_key_separator "-"
-        modifier_format_order "<{mods}{sep}{key}>"
+        modifier_combo_template "<{mods}{sep}{key}>"
     }
 }
 ```

@@ -233,8 +233,8 @@ struct ModifierFormatConfig {
     modifier_separator: String,
     /// Separator between modifiers and key (e.g., " + ", "-", "")
     key_separator: String,
-    /// Custom format order template (e.g., "{mods}{sep}{key}" or "{key}{sep}{mods}")
-    format_order: String,
+    /// Template for composing the combo string (e.g., "{mods}{sep}{key}" or "<{mods}{sep}{key}>")
+    combo_template: String,
 }
 
 impl Default for ModifierFormatConfig {
@@ -246,7 +246,7 @@ impl Default for ModifierFormatConfig {
             super_format: "Super".to_string(),
             modifier_separator: "-".to_string(),
             key_separator: " + ".to_string(),
-            format_order: "{mods}{sep}{key}".to_string(),
+            combo_template: "{mods}{sep}{key}".to_string(),
         }
     }
 }
@@ -262,7 +262,7 @@ impl ModifierFormatConfig {
                 super_format: "Super".to_string(),
                 modifier_separator: "-".to_string(),
                 key_separator: " + ".to_string(),
-                format_order: "{mods}{sep}{key}".to_string(),
+                combo_template: "{mods}{sep}{key}".to_string(),
             },
             ModifierPreset::Brief => ModifierFormatConfig {
                 ctrl_format: "C".to_string(),
@@ -271,7 +271,7 @@ impl ModifierFormatConfig {
                 super_format: "M".to_string(),
                 modifier_separator: "-".to_string(),
                 key_separator: "-".to_string(),
-                format_order: "{mods}{sep}{key}".to_string(),
+                combo_template: "{mods}{sep}{key}".to_string(),
             },
             ModifierPreset::Stripped => ModifierFormatConfig {
                 ctrl_format: String::new(),
@@ -280,7 +280,7 @@ impl ModifierFormatConfig {
                 super_format: String::new(),
                 modifier_separator: String::new(),
                 key_separator: String::new(),
-                format_order: "{key}".to_string(),
+                combo_template: "{key}".to_string(),
             },
         }
     }
@@ -305,7 +305,7 @@ fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFo
         || config.contains_key("modifier_super_format")
         || config.contains_key("modifier_separator")
         || config.contains_key("modifier_key_separator")
-        || config.contains_key("modifier_format_order");
+        || config.contains_key("modifier_combo_template");
 
     if has_custom_format {
         // Use custom format options, starting from defaults
@@ -335,10 +335,10 @@ fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFo
                 .get("modifier_key_separator")
                 .cloned()
                 .unwrap_or(defaults.key_separator),
-            format_order: config
-                .get("modifier_format_order")
+            combo_template: config
+                .get("modifier_combo_template")
                 .cloned()
-                .unwrap_or(defaults.format_order),
+                .unwrap_or(defaults.combo_template),
         }
     } else {
         // Use preset (default to "full" if not specified or invalid)
@@ -816,7 +816,7 @@ fn get_key_separator(key_display: &[String]) -> &'static str {
 
 /// Substitute placeholders in a format template
 /// Supports: {mods}, {keys}, {combo}
-/// {combo} uses the modifier_format_config.format_order and key_separator
+/// {combo} uses the modifier_format_config.combo_template and key_separator
 fn substitute_format_template(
     template: &str,
     modifier_str: &str,
@@ -826,9 +826,9 @@ fn substitute_format_template(
 ) -> String {
     let keys_str = key_display.join(key_separator);
 
-    // Build combo string using the format_order template
+    // Build combo string using the combo_template
     let combo_str = if !modifier_str.is_empty() && !keys_str.is_empty() {
-        modifier_config.format_order
+        modifier_config.combo_template
             .replace("{mods}", modifier_str)
             .replace("{sep}", &modifier_config.key_separator)
             .replace("{key}", &keys_str)
@@ -1525,7 +1525,7 @@ mod tests {
         assert_eq!(config.super_format, "");
         assert_eq!(config.modifier_separator, "");
         assert_eq!(config.key_separator, "");
-        assert_eq!(config.format_order, "{key}");
+        assert_eq!(config.combo_template, "{key}");
     }
 
     #[test]
@@ -1561,7 +1561,7 @@ mod tests {
             super_format: "⌘".to_string(),
             modifier_separator: "".to_string(),
             key_separator: "".to_string(),
-            format_order: "{mods}{key}".to_string(),
+            combo_template: "{mods}{key}".to_string(),
         };
         let modifiers = vec![KeyModifier::Ctrl];
         let result = format_modifier_string(&modifiers, &config);
@@ -1602,7 +1602,7 @@ mod tests {
     }
 
     #[test]
-    fn test_substitute_format_template_with_custom_format_order() {
+    fn test_substitute_format_template_with_custom_combo_template() {
         let keys = vec!["q".to_string()];
         let config = ModifierFormatConfig {
             ctrl_format: "^".to_string(),
@@ -1611,7 +1611,7 @@ mod tests {
             super_format: "M".to_string(),
             modifier_separator: "".to_string(),
             key_separator: "".to_string(),
-            format_order: "{mods}{sep}{key}".to_string(),
+            combo_template: "{mods}{sep}{key}".to_string(),
         };
         let result = substitute_format_template("{combo}", "^", &keys, "", &config);
         assert_eq!(result, "^q");
@@ -1627,7 +1627,7 @@ mod tests {
             super_format: "M".to_string(),
             modifier_separator: "".to_string(),
             key_separator: "".to_string(),
-            format_order: "{key}{sep}{mods}".to_string(),
+            combo_template: "{key}{sep}{mods}".to_string(),
         };
         let result = substitute_format_template("{combo}", "^", &keys, "", &config);
         assert_eq!(result, "q^");
@@ -1644,14 +1644,14 @@ mod tests {
             super_format: "M".to_string(),
             modifier_separator: "".to_string(),
             key_separator: "-".to_string(),
-            format_order: "<{mods}{sep}{key}>".to_string(),
+            combo_template: "<{mods}{sep}{key}>".to_string(),
         };
         let result = substitute_format_template("{combo}", "CMS", &keys, "", &config);
         assert_eq!(result, "<CMS-q>");
     }
 
     #[test]
-    fn test_format_order_with_prefix_suffix_no_mods() {
+    fn test_combo_template_with_prefix_suffix_no_mods() {
         // When there are no modifiers, combo should just be the key (not wrapped)
         let keys = vec!["Enter".to_string()];
         let config = ModifierFormatConfig {
@@ -1661,7 +1661,7 @@ mod tests {
             super_format: "M".to_string(),
             modifier_separator: "".to_string(),
             key_separator: "-".to_string(),
-            format_order: "<{mods}{sep}{key}>".to_string(),
+            combo_template: "<{mods}{sep}{key}>".to_string(),
         };
         // When modifier_str is empty, the combo just returns the key
         let result = substitute_format_template("{combo}", "", &keys, "", &config);
