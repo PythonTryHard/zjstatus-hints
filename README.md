@@ -222,6 +222,105 @@ Format priority (highest to lowest):
 
 **Note:** Template placeholders must include at least one of `{keys}` or `{combo}` to be valid. Invalid templates are ignored and the default is used instead.
 
+### Modifier Format Configuration
+
+Customize how modifier keys (Ctrl, Alt, Shift, Super) are displayed. Each option falls back to its default if not specified. To explicitly use an empty string, set the value to `""`.
+
+#### Format Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `modifier_ctrl_format` | Format for Ctrl modifier | "Ctrl" |
+| `modifier_alt_format` | Format for Alt modifier | "Alt" |
+| `modifier_shift_format` | Format for Shift modifier | "Shift" |
+| `modifier_super_format` | Format for Super modifier | "Super" |
+| `modifier_separator` | Separator between modifiers | "-" |
+| `modifier_key_separator` | Separator between modifiers and key | " + " |
+| `modifier_combo_template` | Template for composing the combo string | "{mods}{sep}{key}" |
+| `key_display_separator` | Separator between multiple keys for the same action | "\|" |
+
+##### Combo Template
+
+The `modifier_combo_template` option is a template string for composing modifier+key combinations:
+- `{mods}`: The formatted modifier string (e.g., "Ctrl", "C-S")
+- `{sep}`: The `modifier_key_separator` value
+- `{key}`: The key(s) being bound
+
+You can include arbitrary prefix/suffix characters in the template (e.g., `<{mods}{sep}{key}>` for Vim-style).
+
+**Literal curly braces:** Only the exact placeholders `{mods}`, `{sep}`, and `{key}` are replaced. Other curly braces are preserved as-is. For example, `{{mods}}` produces `{C}` (the outer braces are literal, only the inner `{mods}` is replaced).
+
+##### Key Display Separator
+
+The `key_display_separator` option controls the separator between multiple keys bound to the same action. For example, if both `h` and `←` move left, they would be displayed as `h|←` by default, or `h / ←` with `key_display_separator " / "`.
+
+#### Examples
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Brief style: C-q, C-A-x
+        modifier_ctrl_format "C"
+        modifier_alt_format "A"
+        modifier_shift_format "S"
+        modifier_super_format "M"
+        modifier_key_separator "-"
+    }
+}
+```
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Caret-style: ^q, ^x
+        modifier_ctrl_format "^"
+        modifier_alt_format "M"
+        modifier_shift_format "S"
+        modifier_super_format "⌘"
+        modifier_separator ""
+        modifier_key_separator ""
+        modifier_combo_template "{mods}{key}"
+    }
+}
+```
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Key-first format: q^, x^
+        modifier_ctrl_format "^"
+        modifier_key_separator ""
+        modifier_combo_template "{key}{mods}"
+    }
+}
+```
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Bracketed format: [C]q
+        modifier_ctrl_format "[C]"
+        modifier_key_separator ""
+        modifier_combo_template "{mods}{key}"
+    }
+}
+```
+
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Vim-style angle bracket format: <C-q>, <C-S-x>
+        modifier_ctrl_format "C"
+        modifier_alt_format "A"
+        modifier_shift_format "S"
+        modifier_super_format "M"
+        modifier_separator "-"
+        modifier_key_separator "-"
+        modifier_combo_template "<{mods}{sep}{key}>"
+    }
+}
+```
+
 ## TODO
 
 - [x] configurable colors/formatting

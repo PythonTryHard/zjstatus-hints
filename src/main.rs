@@ -24,6 +24,8 @@ struct State {
     label_format_config: LabelFormatConfig,
     // Custom label text overrides
     label_text_overrides: HashMap<String, String>,
+    // Custom modifier format configuration
+    modifier_format_config: ModifierFormatConfig,
 }
 
 register_plugin!(State);
@@ -193,6 +195,85 @@ impl Default for LabelFormat {
 struct LabelFormatConfig {
     defaults: LabelFormat,
     overrides: HashMap<String, LabelFormat>,
+}
+
+/// Custom modifier format configuration
+///
+/// Each option falls back to its default value if not specified.
+/// To use an empty string for a field, explicitly set it to "".
+#[derive(Clone)]
+struct ModifierFormatConfig {
+    /// Custom format for Ctrl modifier (e.g., "^", "C", "Ctrl")
+    ctrl_format: String,
+    /// Custom format for Alt modifier (e.g., "A", "Alt", "M")
+    alt_format: String,
+    /// Custom format for Shift modifier (e.g., "S", "Shift", "⇧")
+    shift_format: String,
+    /// Custom format for Super modifier (e.g., "M", "Super", "⌘")
+    super_format: String,
+    /// Separator between modifiers (e.g., "-", "+", "")
+    modifier_separator: String,
+    /// Separator between modifiers and key (e.g., " + ", "-", "")
+    key_separator: String,
+    /// Template for composing the combo string (e.g., "{mods}{sep}{key}" or "<{mods}{sep}{key}>")
+    combo_template: String,
+    /// Separator between multiple keys for the same action (e.g., "|", " | ", "/")
+    key_display_separator: String,
+}
+
+impl Default for ModifierFormatConfig {
+    fn default() -> Self {
+        ModifierFormatConfig {
+            ctrl_format: "Ctrl".to_string(),
+            alt_format: "Alt".to_string(),
+            shift_format: "Shift".to_string(),
+            super_format: "Super".to_string(),
+            modifier_separator: "-".to_string(),
+            key_separator: " + ".to_string(),
+            combo_template: "{mods}{sep}{key}".to_string(),
+            key_display_separator: "|".to_string(),
+        }
+    }
+}
+
+/// Parse modifier format configuration from plugin configuration
+/// Uses lazy substitution: each option falls back to its default if not specified.
+fn parse_modifier_format_config(config: &BTreeMap<String, String>) -> ModifierFormatConfig {
+    let defaults = ModifierFormatConfig::default();
+    ModifierFormatConfig {
+        ctrl_format: config
+            .get("modifier_ctrl_format")
+            .cloned()
+            .unwrap_or(defaults.ctrl_format),
+        alt_format: config
+            .get("modifier_alt_format")
+            .cloned()
+            .unwrap_or(defaults.alt_format),
+        shift_format: config
+            .get("modifier_shift_format")
+            .cloned()
+            .unwrap_or(defaults.shift_format),
+        super_format: config
+            .get("modifier_super_format")
+            .cloned()
+            .unwrap_or(defaults.super_format),
+        modifier_separator: config
+            .get("modifier_separator")
+            .cloned()
+            .unwrap_or(defaults.modifier_separator),
+        key_separator: config
+            .get("modifier_key_separator")
+            .cloned()
+            .unwrap_or(defaults.key_separator),
+        combo_template: config
+            .get("modifier_combo_template")
+            .cloned()
+            .unwrap_or(defaults.combo_template),
+        key_display_separator: config
+            .get("key_display_separator")
+            .cloned()
+            .unwrap_or(defaults.key_display_separator),
+    }
 }
 
 /// Parse per-label format overrides from configuration
@@ -412,6 +493,9 @@ impl ZellijPlugin for State {
         // Parse custom label text overrides
         self.label_text_overrides = parse_label_text_overrides(&configuration);
 
+        // Parse custom modifier format configuration
+        self.modifier_format_config = parse_modifier_format_config(&configuration);
+
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
@@ -437,7 +521,7 @@ impl ZellijPlugin for State {
         let mode_info = &self.mode_info;
         let output = if !(self.hide_in_base_mode && Some(mode_info.mode) == mode_info.base_mode) {
             let keymap = get_keymap_for_mode(mode_info);
-            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config, &self.label_text_overrides);
+            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config, &self.modifier_format_config, &self.label_text_overrides);
 
             let ansi_strings = ANSIStrings(&parts);
             let formatted = format!(" {}", ansi_strings);
@@ -591,67 +675,106 @@ fn find_keys_for_action_groups(
         .collect()
 }
 
-fn format_modifier_string(modifiers: &[KeyModifier]) -> String {
+/// Format a single modifier according to the config
+fn format_modifier(modifier: &KeyModifier, config: &ModifierFormatConfig) -> String {
+    match modifier {
+        KeyModifier::Ctrl => config.ctrl_format.clone(),
+        KeyModifier::Alt => config.alt_format.clone(),
+        KeyModifier::Shift => config.shift_format.clone(),
+        KeyModifier::Super => config.super_format.clone(),
+    }
+}
+
+fn format_modifier_string(modifiers: &[KeyModifier], config: &ModifierFormatConfig) -> String {
     if modifiers.is_empty() {
         String::new()
     } else {
         modifiers
             .iter()
-            .map(|m| m.to_string())
+            .filter_map(|m| {
+                let formatted = format_modifier(m, config);
+                if formatted.is_empty() {
+                    None
+                } else {
+                    Some(formatted)
+                }
+            })
             .collect::<Vec<_>>()
-            .join("-")
+            .join(&config.modifier_separator)
     }
 }
 
 fn format_key_display(
     key_bindings: &[KeyWithModifier],
     common_modifiers: &[KeyModifier],
+    modifier_config: &ModifierFormatConfig,
 ) -> Vec<String> {
     key_bindings
         .iter()
         .map(|key| {
             if common_modifiers.is_empty() {
-                format!("{}", key)
+                // No common modifiers - format each key with its full modifiers
+                let key_modifiers: Vec<KeyModifier> = key.key_modifiers.iter().cloned().collect();
+                let modifier_str = format_modifier_string(&key_modifiers, modifier_config);
+                if modifier_str.is_empty() {
+                    format!("{}", key.bare_key)
+                } else {
+                    // Use the combo template for proper formatting
+                    modifier_config.combo_template
+                        .replace("{mods}", &modifier_str)
+                        .replace("{sep}", &modifier_config.key_separator)
+                        .replace("{key}", &format!("{}", key.bare_key))
+                }
             } else {
-                let unique_modifiers = key
+                // Has common modifiers - only show unique modifiers per key
+                let unique_modifiers: Vec<KeyModifier> = key
                     .key_modifiers
                     .iter()
                     .filter(|m| !common_modifiers.contains(m))
-                    .map(|m| m.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                if unique_modifiers.is_empty() {
+                    .cloned()
+                    .collect();
+                let modifier_str = format_modifier_string(&unique_modifiers, modifier_config);
+                if modifier_str.is_empty() {
                     format!("{}", key.bare_key)
                 } else {
-                    format!("{} {}", unique_modifiers, key.bare_key)
+                    // Use the combo template for proper formatting
+                    modifier_config.combo_template
+                        .replace("{mods}", &modifier_str)
+                        .replace("{sep}", &modifier_config.key_separator)
+                        .replace("{key}", &format!("{}", key.bare_key))
                 }
             }
         })
         .collect()
 }
 
-fn get_key_separator(key_display: &[String]) -> &'static str {
+fn get_key_separator<'a>(key_display: &[String], modifier_config: &'a ModifierFormatConfig) -> &'a str {
     let key_string = key_display.join("");
     if KEY_PATTERNS_NO_SEPARATOR.contains(&&key_string[..]) {
         ""
     } else {
-        "|"
+        &modifier_config.key_display_separator
     }
 }
 
 /// Substitute placeholders in a format template
 /// Supports: {mods}, {keys}, {combo}
-/// {combo} is {mods} + {keys} when both are present, otherwise just {keys}
+/// {combo} uses the modifier_format_config.combo_template and key_separator
 fn substitute_format_template(
     template: &str,
     modifier_str: &str,
     key_display: &[String],
     key_separator: &str,
+    modifier_config: &ModifierFormatConfig,
 ) -> String {
     let keys_str = key_display.join(key_separator);
 
+    // Build combo string using the combo_template
     let combo_str = if !modifier_str.is_empty() && !keys_str.is_empty() {
-        format!("{} + {}", modifier_str, keys_str)
+        modifier_config.combo_template
+            .replace("{mods}", modifier_str)
+            .replace("{sep}", &modifier_config.key_separator)
+            .replace("{key}", &keys_str)
     } else if !modifier_str.is_empty() {
         modifier_str.to_string()
     } else {
@@ -670,6 +793,7 @@ fn style_key_with_modifier(
     palette: &Styling,
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
+    modifier_format_config: &ModifierFormatConfig,
     mode: Option<&str>,
     label: &str,
     strip_modifier: Option<&[KeyModifier]>,
@@ -702,13 +826,13 @@ fn style_key_with_modifier(
         common_modifiers.clone()
     };
 
-    let modifier_str = format_modifier_string(&display_modifiers);
-    let key_display = format_key_display(key_bindings, &common_modifiers);
-    let key_separator = get_key_separator(&key_display);
+    let modifier_str = format_modifier_string(&display_modifiers, modifier_format_config);
+    let key_display = format_key_display(key_bindings, &common_modifiers, modifier_format_config);
+    let key_separator = get_key_separator(&key_display, modifier_format_config);
 
     // Get the format template for this label
     let template = get_format_for_label(label_format_config, mode, label);
-    let formatted_combo = substitute_format_template(&template, &modifier_str, &key_display, key_separator);
+    let formatted_combo = substitute_format_template(&template, &modifier_str, &key_display, key_separator, modifier_format_config);
 
     styled_parts.push(Style::new().paint(" "));
 
@@ -779,6 +903,7 @@ fn add_hint(
     colors: &Styling,
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
+    modifier_format_config: &ModifierFormatConfig,
     label_text_overrides: &HashMap<String, String>,
     mode: Option<&str>,
     strip_modifier: Option<&[KeyModifier]>,
@@ -786,7 +911,7 @@ fn add_hint(
     if !keys.is_empty() {
         // Apply label text override if available (with mode-specific lookup)
         let display_label = get_label_text(label_text_overrides, mode, description);
-        let styled_keys = style_key_with_modifier(keys, colors, color_config, label_format_config, mode, description, strip_modifier);
+        let styled_keys = style_key_with_modifier(keys, colors, color_config, label_format_config, modifier_format_config, mode, description, strip_modifier);
         parts.extend(styled_keys);
         let styled_desc = style_description(&display_label, colors, color_config, mode, description);
         parts.extend(styled_desc);
@@ -808,46 +933,13 @@ fn mode_to_str(mode: InputMode) -> Option<&'static str> {
     }
 }
 
-/// Extract common modifiers from rendered hint keys using a threshold (80%)
-/// A modifier is considered "common" if it appears in at least 80% of the hint keys.
-/// This allows for some hints (like unmodified Enter for "select") to deviate without
-/// eliminating the common modifier that most hints share.
-fn extract_common_modifiers_from_hints(keys: &[KeyWithModifier]) -> Vec<KeyModifier> {
-    if keys.is_empty() {
-        return vec![];
-    }
-
-    // Threshold: modifier must appear in at least 80% of hints to be "common"
-    let threshold = (keys.len() as f32 * 0.8).ceil() as usize;
-
-    // Count occurrences of each modifier
-    let mut modifier_counts: std::collections::HashMap<KeyModifier, usize> =
-        std::collections::HashMap::new();
-
-    for key in keys {
-        for modifier in &key.key_modifiers {
-            *modifier_counts.entry(*modifier).or_insert(0) += 1;
-        }
-    }
-
-    // Keep only modifiers that meet the threshold, then sort for deterministic output
-    let mut common_mods: Vec<KeyModifier> = modifier_counts
-        .into_iter()
-        .filter(|(_, count)| *count >= threshold)
-        .map(|(modifier, _)| modifier)
-        .collect();
-
-    // Sort to ensure deterministic output (not dependent on HashMap iteration order)
-    common_mods.sort();
-    common_mods
-}
-
 fn render_hints_for_mode(
     mode: InputMode,
     keymap: &[(KeyWithModifier, Vec<Action>)],
     colors: &Styling,
     color_config: &ColorConfig,
     label_format_config: &LabelFormatConfig,
+    modifier_format_config: &ModifierFormatConfig,
     label_text_overrides: &HashMap<String, String>,
 ) -> Vec<ANSIString<'static>> {
     let mut parts = vec![];
@@ -1131,38 +1223,7 @@ fn render_hints_for_mode(
         }
     }
 
-    // Now extract common modifiers from only the collected hints
-    let all_rendered_keys: Vec<KeyWithModifier> = hints
-        .iter()
-        .flat_map(|(keys, _)| keys.iter().cloned())
-        .collect();
-
-    let common_modifiers = if !all_rendered_keys.is_empty() {
-        extract_common_modifiers_from_hints(&all_rendered_keys)
-    } else {
-        vec![]
-    };
-
-    // Render the common modifier badge if present
-    if !common_modifiers.is_empty() {
-        let modifier_str = format_modifier_string(&common_modifiers);
-        let colors_for_mods = get_colors_for_label(color_config, mode_str, "");
-
-        // Use custom colors if configured, otherwise fall back to palette
-        let key_bg = colors_for_mods.key_bg
-            .unwrap_or_else(|| palette_match!(colors.ribbon_unselected.background));
-        let key_fg = colors_for_mods.key_fg
-            .unwrap_or_else(|| palette_match!(colors.ribbon_unselected.base));
-
-        parts.push(Style::new()
-            .fg(key_fg)
-            .on(key_bg)
-            .bold()
-            .paint(format!(" {} ", modifier_str)));
-        parts.push(Style::new().paint(" "));
-    }
-
-    // Render each hint with modifiers stripped from common ones
+    // Render each hint with full modifiers (no stripping)
     for (keys, label) in hints {
         add_hint(
             &mut parts,
@@ -1171,13 +1232,10 @@ fn render_hints_for_mode(
             colors,
             color_config,
             label_format_config,
+            modifier_format_config,
             label_text_overrides,
             mode_str,
-            if common_modifiers.is_empty() {
-                None
-            } else {
-                Some(&common_modifiers)
-            },
+            None,
         );
     }
 
@@ -1205,35 +1263,40 @@ mod tests {
     #[test]
     fn test_substitute_format_template_with_combo_only() {
         let keys = vec!["a".to_string(), "b".to_string()];
-        let result = substitute_format_template("{combo}", "Ctrl", &keys, "|");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{combo}", "Ctrl", &keys, "|", &config);
         assert_eq!(result, "Ctrl + a|b");
     }
 
     #[test]
     fn test_substitute_format_template_with_no_modifiers() {
         let keys = vec!["Enter".to_string()];
-        let result = substitute_format_template("{combo}", "", &keys, "");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{combo}", "", &keys, "", &config);
         assert_eq!(result, "Enter");
     }
 
     #[test]
     fn test_substitute_format_template_with_only_modifiers() {
         let keys: Vec<String> = vec![];
-        let result = substitute_format_template("{combo}", "Ctrl", &keys, "");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{combo}", "Ctrl", &keys, "", &config);
         assert_eq!(result, "Ctrl");
     }
 
     #[test]
     fn test_substitute_format_template_with_mods_and_keys_separate() {
         let keys = vec!["a".to_string()];
-        let result = substitute_format_template("{mods} {keys}", "Ctrl", &keys, "");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{mods} {keys}", "Ctrl", &keys, "", &config);
         assert_eq!(result, "Ctrl a");
     }
 
     #[test]
     fn test_substitute_format_template_with_custom_separator() {
         let keys = vec!["a".to_string(), "b".to_string()];
-        let result = substitute_format_template("{mods} → {keys}", "Ctrl", &keys, "|");
+        let config = ModifierFormatConfig::default();
+        let result = substitute_format_template("{mods} → {keys}", "Ctrl", &keys, "|", &config);
         assert_eq!(result, "Ctrl → a|b");
     }
 
@@ -1298,5 +1361,157 @@ mod tests {
 
         let result = get_format_for_label(&config, Some("pane"), "unknown");
         assert_eq!(result, "{combo}");
+    }
+
+    // Tests for modifier format configuration
+
+    #[test]
+    fn test_modifier_format_config_defaults() {
+        let config = ModifierFormatConfig::default();
+        assert_eq!(config.ctrl_format, "Ctrl");
+        assert_eq!(config.alt_format, "Alt");
+        assert_eq!(config.shift_format, "Shift");
+        assert_eq!(config.super_format, "Super");
+        assert_eq!(config.modifier_separator, "-");
+        assert_eq!(config.key_separator, " + ");
+        assert_eq!(config.combo_template, "{mods}{sep}{key}");
+        assert_eq!(config.key_display_separator, "|");
+    }
+
+    #[test]
+    fn test_format_modifier_string_with_defaults() {
+        let config = ModifierFormatConfig::default();
+        let modifiers = vec![KeyModifier::Ctrl, KeyModifier::Shift];
+        let result = format_modifier_string(&modifiers, &config);
+        assert_eq!(result, "Ctrl-Shift");
+    }
+
+    #[test]
+    fn test_format_modifier_string_empty_modifiers() {
+        let config = ModifierFormatConfig::default();
+        let modifiers: Vec<KeyModifier> = vec![];
+        let result = format_modifier_string(&modifiers, &config);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_format_modifier_string_custom() {
+        let config = ModifierFormatConfig {
+            ctrl_format: "^".to_string(),
+            alt_format: "M".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "⌘".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "".to_string(),
+            combo_template: "{mods}{key}".to_string(),
+            key_display_separator: "|".to_string(),
+        };
+        let modifiers = vec![KeyModifier::Ctrl];
+        let result = format_modifier_string(&modifiers, &config);
+        assert_eq!(result, "^");
+    }
+
+    #[test]
+    fn test_parse_modifier_format_config_with_defaults() {
+        let config: BTreeMap<String, String> = BTreeMap::new();
+        let result = parse_modifier_format_config(&config);
+        assert_eq!(result.ctrl_format, "Ctrl");
+        assert_eq!(result.key_separator, " + ");
+    }
+
+    #[test]
+    fn test_parse_modifier_format_config_with_custom() {
+        let mut config = BTreeMap::new();
+        config.insert("modifier_ctrl_format".to_string(), "^".to_string());
+        config.insert("modifier_key_separator".to_string(), "".to_string());
+
+        let result = parse_modifier_format_config(&config);
+        assert_eq!(result.ctrl_format, "^");
+        assert_eq!(result.key_separator, "");
+        // Other values should use defaults
+        assert_eq!(result.alt_format, "Alt");
+    }
+
+    #[test]
+    fn test_parse_modifier_format_config_empty_string() {
+        // Test that empty strings are preserved (not treated as falsy)
+        let mut config = BTreeMap::new();
+        config.insert("modifier_ctrl_format".to_string(), "".to_string());
+
+        let result = parse_modifier_format_config(&config);
+        assert_eq!(result.ctrl_format, "");
+        // Other values should use defaults
+        assert_eq!(result.alt_format, "Alt");
+    }
+
+    #[test]
+    fn test_substitute_format_template_with_custom_combo_template() {
+        let keys = vec!["q".to_string()];
+        let config = ModifierFormatConfig {
+            ctrl_format: "^".to_string(),
+            alt_format: "A".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "M".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "".to_string(),
+            combo_template: "{mods}{sep}{key}".to_string(),
+            key_display_separator: "|".to_string(),
+        };
+        let result = substitute_format_template("{combo}", "^", &keys, "", &config);
+        assert_eq!(result, "^q");
+    }
+
+    #[test]
+    fn test_substitute_format_template_with_reversed_order() {
+        let keys = vec!["q".to_string()];
+        let config = ModifierFormatConfig {
+            ctrl_format: "^".to_string(),
+            alt_format: "A".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "M".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "".to_string(),
+            combo_template: "{key}{sep}{mods}".to_string(),
+            key_display_separator: "|".to_string(),
+        };
+        let result = substitute_format_template("{combo}", "^", &keys, "", &config);
+        assert_eq!(result, "q^");
+    }
+
+    #[test]
+    fn test_substitute_format_template_with_brackets() {
+        // Test format like <CMS-q>
+        let keys = vec!["q".to_string()];
+        let config = ModifierFormatConfig {
+            ctrl_format: "C".to_string(),
+            alt_format: "A".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "M".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "-".to_string(),
+            combo_template: "<{mods}{sep}{key}>".to_string(),
+            key_display_separator: "|".to_string(),
+        };
+        let result = substitute_format_template("{combo}", "CMS", &keys, "", &config);
+        assert_eq!(result, "<CMS-q>");
+    }
+
+    #[test]
+    fn test_combo_template_with_prefix_suffix_no_mods() {
+        // When there are no modifiers, combo should just be the key (not wrapped)
+        let keys = vec!["Enter".to_string()];
+        let config = ModifierFormatConfig {
+            ctrl_format: "C".to_string(),
+            alt_format: "A".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "M".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "-".to_string(),
+            combo_template: "<{mods}{sep}{key}>".to_string(),
+            key_display_separator: "|".to_string(),
+        };
+        // When modifier_str is empty, the combo just returns the key
+        let result = substitute_format_template("{combo}", "", &keys, "", &config);
+        assert_eq!(result, "Enter");
     }
 }
