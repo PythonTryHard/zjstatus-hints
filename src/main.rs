@@ -3,7 +3,7 @@ use ansi_term::{
     Colour::{Fixed, RGB},
     Style,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use zellij_tile::prelude::actions::Action;
 use zellij_tile::prelude::actions::SearchDirection;
 use zellij_tile::prelude::*;
@@ -28,6 +28,8 @@ struct State {
     label_text_overrides: HashMap<String, String>,
     // Custom modifier format configuration
     modifier_format_config: ModifierFormatConfig,
+    // Set of keybind labels to hide
+    hidden_keybinds: HashSet<String>,
 }
 
 register_plugin!(State);
@@ -584,6 +586,47 @@ fn get_common_modifiers(mut key_bindings: Vec<&KeyWithModifier>) -> Vec<KeyModif
     common_modifiers.into_iter().collect()
 }
 
+/// Parse hidden keybinds configuration from plugin configuration
+///
+/// Supports two configuration options:
+/// - `hide_shared_keybinds`: Boolean to hide all common shared keybinds (default: false)
+/// - `hidden_keybinds`: Comma-separated list of specific keybinds to hide
+///
+/// When `hide_shared_keybinds` is true, common shared keybinds like "select", "scroll", 
+/// "page", "half page", "search" are hidden by default.
+///
+/// Additional keybinds can be hidden using `hidden_keybinds` option.
+fn parse_hidden_keybinds(config: &BTreeMap<String, String>) -> HashSet<String> {
+    let mut hidden = HashSet::new();
+    
+    // Check if hide_shared_keybinds is enabled
+    let hide_shared = config
+        .get("hide_shared_keybinds")
+        .map(|s| s.to_lowercase().parse::<bool>().unwrap_or(false))
+        .unwrap_or(false);
+    
+    if hide_shared {
+        // Add common shared keybinds
+        hidden.insert("select".to_string());
+        hidden.insert("scroll".to_string());
+        hidden.insert("page".to_string());
+        hidden.insert("half page".to_string());
+        hidden.insert("search".to_string());
+    }
+    
+    // Parse custom hidden keybinds from comma-separated list
+    if let Some(custom_hidden) = config.get("hidden_keybinds") {
+        for keybind in custom_hidden.split(',') {
+            let trimmed = keybind.trim();
+            if !trimmed.is_empty() {
+                hidden.insert(trimmed.to_string());
+            }
+        }
+    }
+    
+    hidden
+}
+
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
         self.initialized = false;
@@ -649,6 +692,9 @@ impl ZellijPlugin for State {
         // Parse custom modifier format configuration
         self.modifier_format_config = parse_modifier_format_config(&configuration);
 
+        // Parse hidden keybinds configuration
+        self.hidden_keybinds = parse_hidden_keybinds(&configuration);
+
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::MessageAndLaunchOtherPlugins,
@@ -674,7 +720,7 @@ impl ZellijPlugin for State {
         let mode_info = &self.mode_info;
         let output = if !(self.hide_in_base_mode && Some(mode_info.mode) == mode_info.base_mode) {
             let keymap = get_keymap_for_mode(mode_info);
-            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config, &self.modifier_format_config, &self.label_text_mode_defaults, &self.label_text_overrides);
+            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors, &self.color_config, &self.label_format_config, &self.modifier_format_config, &self.label_text_mode_defaults, &self.label_text_overrides, &self.hidden_keybinds);
 
             let ansi_strings = ANSIStrings(&parts);
             let formatted = format!(" {}", ansi_strings);
@@ -1087,6 +1133,7 @@ fn mode_to_str(mode: InputMode) -> Option<&'static str> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_hints_for_mode(
     mode: InputMode,
     keymap: &[(KeyWithModifier, Vec<Action>)],
@@ -1096,6 +1143,7 @@ fn render_hints_for_mode(
     modifier_format_config: &ModifierFormatConfig,
     label_text_mode_defaults: &HashMap<String, String>,
     label_text_overrides: &HashMap<String, String>,
+    hidden_keybinds: &HashSet<String>,
 ) -> Vec<ANSIString<'static>> {
     let mut parts = vec![];
     let select_keys = get_select_key(keymap);
@@ -1378,8 +1426,13 @@ fn render_hints_for_mode(
         }
     }
 
-    // Render each hint with full modifiers (no stripping)
+    // Render each hint with full modifiers (no stripping), filtering out hidden keybinds
     for (keys, label) in hints {
+        // Skip this hint if it's in the hidden keybinds set
+        if hidden_keybinds.contains(label) {
+            continue;
+        }
+        
         add_hint(
             &mut parts,
             &keys,
@@ -1723,5 +1776,72 @@ mod tests {
         // When modifier_str is empty, the combo just returns the key
         let result = substitute_format_template("{combo}", "", &keys, "", &config);
         assert_eq!(result, "Enter");
+    }
+
+    // Tests for hidden keybinds configuration
+
+    #[test]
+    fn test_parse_hidden_keybinds_empty() {
+        let config = BTreeMap::new();
+        let result = parse_hidden_keybinds(&config);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_hidden_keybinds_with_hide_shared() {
+        let mut config = BTreeMap::new();
+        config.insert("hide_shared_keybinds".to_string(), "true".to_string());
+        let result = parse_hidden_keybinds(&config);
+        
+        assert!(result.contains("select"));
+        assert!(result.contains("scroll"));
+        assert!(result.contains("page"));
+        assert!(result.contains("half page"));
+        assert!(result.contains("search"));
+    }
+
+    #[test]
+    fn test_parse_hidden_keybinds_with_custom_list() {
+        let mut config = BTreeMap::new();
+        config.insert("hidden_keybinds".to_string(), "move,resize,quit".to_string());
+        let result = parse_hidden_keybinds(&config);
+        
+        assert!(result.contains("move"));
+        assert!(result.contains("resize"));
+        assert!(result.contains("quit"));
+        assert!(!result.contains("select"));
+    }
+
+    #[test]
+    fn test_parse_hidden_keybinds_combined() {
+        let mut config = BTreeMap::new();
+        config.insert("hide_shared_keybinds".to_string(), "true".to_string());
+        config.insert("hidden_keybinds".to_string(), "move,resize".to_string());
+        let result = parse_hidden_keybinds(&config);
+        
+        // Should have both shared and custom
+        assert!(result.contains("select"));
+        assert!(result.contains("move"));
+        assert!(result.contains("resize"));
+    }
+
+    #[test]
+    fn test_parse_hidden_keybinds_with_spaces() {
+        let mut config = BTreeMap::new();
+        config.insert("hidden_keybinds".to_string(), "move, resize , quit".to_string());
+        let result = parse_hidden_keybinds(&config);
+        
+        assert!(result.contains("move"));
+        assert!(result.contains("resize"));
+        assert!(result.contains("quit"));
+    }
+
+    #[test]
+    fn test_parse_hidden_keybinds_false() {
+        let mut config = BTreeMap::new();
+        config.insert("hide_shared_keybinds".to_string(), "false".to_string());
+        let result = parse_hidden_keybinds(&config);
+        
+        assert!(result.is_empty());
     }
 }
