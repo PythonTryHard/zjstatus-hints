@@ -303,6 +303,21 @@ plugins {
 }
 ```
 
+```kdl
+plugins {
+    zjstatus-hints location="..." {
+        // Vim-style angle bracket format: <C-q>, <C-S-x>
+        modifier_ctrl_format "C"
+        modifier_alt_format "A"
+        modifier_shift_format "S"
+        modifier_super_format "M"
+        modifier_separator "-"
+        modifier_key_separator "-"
+        modifier_format_order "<{mods}{sep}{key}>"
+    }
+}
+```
+
 ## TODO
 
 - [x] configurable colors/formatting

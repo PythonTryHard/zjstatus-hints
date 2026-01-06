@@ -1632,4 +1632,39 @@ mod tests {
         let result = substitute_format_template("{combo}", "^", &keys, "", &config);
         assert_eq!(result, "q^");
     }
+
+    #[test]
+    fn test_substitute_format_template_with_brackets() {
+        // Test format like <CMS-q>
+        let keys = vec!["q".to_string()];
+        let config = ModifierFormatConfig {
+            ctrl_format: "C".to_string(),
+            alt_format: "A".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "M".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "-".to_string(),
+            format_order: "<{mods}{sep}{key}>".to_string(),
+        };
+        let result = substitute_format_template("{combo}", "CMS", &keys, "", &config);
+        assert_eq!(result, "<CMS-q>");
+    }
+
+    #[test]
+    fn test_format_order_with_prefix_suffix_no_mods() {
+        // When there are no modifiers, combo should just be the key (not wrapped)
+        let keys = vec!["Enter".to_string()];
+        let config = ModifierFormatConfig {
+            ctrl_format: "C".to_string(),
+            alt_format: "A".to_string(),
+            shift_format: "S".to_string(),
+            super_format: "M".to_string(),
+            modifier_separator: "".to_string(),
+            key_separator: "-".to_string(),
+            format_order: "<{mods}{sep}{key}>".to_string(),
+        };
+        // When modifier_str is empty, the combo just returns the key
+        let result = substitute_format_template("{combo}", "", &keys, "", &config);
+        assert_eq!(result, "Enter");
+    }
 }
